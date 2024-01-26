@@ -180,18 +180,18 @@ DATASET_NAME_MAPPING = {
 # adam_weight_decay = 1e-2
 # adam_epsilon = 1e-08
 # dataset_name = "lambdalabs/pokemon-blip-captions"
-train_data_dir = None
-dataset_config_name = None
-cache_dir = None
+# train_data_dir = None ##
+# dataset_config_name = None ##
+# cache_dir = None ##
 # image_column = "image"
 # caption_column = "text"
 # resolution = 512
-center_crop = False
-random_flip = True
-max_train_samples = None
+# center_crop = False #
+# random_flip = True #
+# max_train_samples = None #
 # dataloader_num_workers = 0
 # max_train_steps = 10
-num_train_epochs = None
+# num_train_epochs = None ##
 # lr_warmup_steps = 0
 lr_scheduler = "constant"
 resume_from_checkpoint = None
@@ -287,18 +287,18 @@ def main(args) :
             # Downloading and loading a dataset from the hub.
             dataset = load_dataset(
                 args.dataset_name,
-                dataset_config_name,
-                cache_dir=cache_dir,
-                data_dir=train_data_dir,
+                args.dataset_config_name,
+                cache_dir=args.cache_dir,
+                data_dir=args.train_data_dir,
     )
     else:
             data_files = {}
-            if train_data_dir is not None:
-                data_files["train"] = os.path.join(train_data_dir, "**")
+            if args.train_data_dir is not None:
+                data_files["train"] = os.path.join(args.train_data_dir, "**")
             dataset = load_dataset(
                 "imagefolder",
                 data_files=data_files,
-                cache_dir=cache_dir)
+                cache_dir=args.cache_dir)
 
     column_names = dataset["train"].column_names
 
@@ -312,20 +312,20 @@ def main(args) :
             raise ValueError(
                 f"--image_column' value '{args.image_column}' needs to be one of: {', '.join(column_names)}"
             )
-    if caption_column is None:
-        caption_column = dataset_columns[1] if dataset_columns is not None else column_names[1]
+    if args.caption_column is None:
+        args.caption_column = dataset_columns[1] if dataset_columns is not None else column_names[1]
     else:
-        caption_column = caption_column
-        if caption_column not in column_names:
+        args.caption_column = args.caption_column
+        if args.caption_column not in column_names:
             raise ValueError(
-                f"--caption_column' value '{caption_column}' needs to be one of: {', '.join(column_names)}"
+                f"--caption_column' value '{args.caption_column}' needs to be one of: {', '.join(column_names)}"
             )
 
         # Preprocessing the datasets.
         # We need to tokenize input captions and transform the images.
     def tokenize_captions(examples, is_train=True):
         captions = []
-        for caption in examples[caption_column]:
+        for caption in examples[args.caption_column]:
             if isinstance(caption, str):
                 captions.append(caption)
             elif isinstance(caption, (list, np.ndarray)):
@@ -333,7 +333,7 @@ def main(args) :
                 captions.append(random.choice(caption) if is_train else caption[0])
             else:
                 raise ValueError(
-                    f"Caption column `{caption_column}` should contain either strings or lists of strings."
+                    f"Caption column `{args.caption_column}` should contain either strings or lists of strings."
                 )
         inputs = tokenizer(
             captions, max_length=tokenizer.model_max_length, padding="max_length", truncation=True, return_tensors="pt"
@@ -344,8 +344,8 @@ def main(args) :
     train_transforms = transforms.Compose(
         [
             transforms.Resize(args.resolution, interpolation=transforms.InterpolationMode.BILINEAR),
-            transforms.CenterCrop(args.resolution) if center_crop else transforms.RandomCrop(args.resolution),
-            transforms.RandomHorizontalFlip() if random_flip else transforms.Lambda(lambda x: x),
+            transforms.CenterCrop(args.resolution) if args.center_crop else transforms.RandomCrop(args.resolution),
+            transforms.RandomHorizontalFlip() if args.random_flip else transforms.Lambda(lambda x: x),
             transforms.ToTensor(),
             transforms.Normalize([0.5], [0.5]),
         ]
@@ -358,8 +358,8 @@ def main(args) :
         return examples
 
     with accelerator.main_process_first():
-        if max_train_samples is not None:
-            dataset["train"] = dataset["train"].shuffle(seed=args.seed).select(range(max_train_samples))
+        if args.max_train_samples is not None:
+            dataset["train"] = dataset["train"].shuffle(seed=args.seed).select(range(args.max_train_samples))
         # Set the training transforms
         train_dataset = dataset["train"].with_transform(preprocess_train)
 
@@ -381,20 +381,20 @@ def main(args) :
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
-    if max_train_steps is None:
-        max_train_steps = num_train_epochs * num_update_steps_per_epoch
+    if args.max_train_steps is None:
+        args.max_train_steps = num_train_epochs * num_update_steps_per_epoch
         overrode_max_train_steps = True
 
-    lr_scheduler = get_scheduler(
-        lr_scheduler,
-        optimizer=args.optimizer,
+    args.lr_scheduler = get_scheduler(
+        args.lr_scheduler,
+        optimizer=optimizer,
         num_warmup_steps=args.lr_warmup_steps * accelerator.num_processes,
-        num_training_steps=max_train_steps * accelerator.num_processes,
+        num_training_steps=args.max_train_steps * accelerator.num_processes,
     )
 
     # Prepare everything with our `accelerator`.
-    unet, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-        unet, optimizer, train_dataloader, lr_scheduler
+    unet, optimizer, train_dataloader, args.lr_scheduler = accelerator.prepare(
+        unet, optimizer, train_dataloader, args.lr_scheduler
     )
 
     #datatype setting
@@ -406,15 +406,15 @@ def main(args) :
         mixed_precision = accelerator.mixed_precision
 
     # Move text_encode and vae to gpu and cast to weight_dtype
-    text_encoder.to(accelerator.device, dtype=weight_dtype)
-    vae.to(accelerator.device, dtype=weight_dtype)
+    text_encoder.to(accelerator.device, dtype=args.weight_dtype)
+    vae.to(accelerator.device, dtype=args.weight_dtype)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
     if overrode_max_train_steps:
-            max_train_steps = num_train_epochs * num_update_steps_per_epoch
+            args.max_train_steps = num_train_epochs * num_update_steps_per_epoch
     # Afterwards we recalculate our number of training epochs
-    num_train_epochs = math.ceil(max_train_steps / num_update_steps_per_epoch)
+    num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
 
 
     # Function for unwrapping if model was compiled with `torch.compile`.
@@ -434,15 +434,15 @@ def main(args) :
         f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}"
     )
     print(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
-    print(f"  Total optimization steps = {max_train_steps}")
+    print(f"  Total optimization steps = {args.max_train_steps}")
 
     global_step = 0
     first_epoch = 0
 
     # Potentially load in the weights and states from a previous save
-    if resume_from_checkpoint:
-        if resume_from_checkpoint != "latest":
-            path = os.path.basename(resume_from_checkpoint)
+    if args.resume_from_checkpoint:
+        if args.resume_from_checkpoint != "latest":
+            path = os.path.basename(args.resume_from_checkpoint)
         else:
             # Get the most recent checkpoint
             dirs = os.listdir(args.output_dir)
@@ -452,9 +452,9 @@ def main(args) :
 
         if path is None:
             accelerator.print(
-                f"Checkpoint '{resume_from_checkpoint}' does not exist. Starting a new training run."
+                f"Checkpoint '{args.resume_from_checkpoint}' does not exist. Starting a new training run."
             )
-            resume_from_checkpoint = None
+            args.resume_from_checkpoint = None
             initial_global_step = 0
         else:
             accelerator.print(f"Resuming from checkpoint {path}")
@@ -468,7 +468,7 @@ def main(args) :
         initial_global_step = 0
 
     progress_bar = tqdm(
-        range(0, max_train_steps),
+        range(0, args.max_train_steps),
         initial=initial_global_step,
         desc="Steps",
         # Only show the progress bar once on each machine.
@@ -480,7 +480,7 @@ def main(args) :
         for step, batch in enumerate(train_dataloader):
             with accelerator.accumulate(unet):
                 # Convert images to latent space
-                latents = vae.encode(batch["pixel_values"].to(weight_dtype)).latent_dist.sample()
+                latents = vae.encode(batch["pixel_values"].to(args.weight_dtype)).latent_dist.sample()
                 latents = latents * vae.config.scaling_factor
 
                 # Sample noise that we'll add to the latents
@@ -549,7 +549,7 @@ def main(args) :
                 if accelerator.sync_gradients:
                     accelerator.clip_grad_norm_(unet.parameters(), args.max_grad_norm)
                 optimizer.step()
-                lr_scheduler.step()
+                args.lr_scheduler.step()
                 optimizer.zero_grad()
 
                 # Checks if the accelerator has performed an optimization step behind the scenes
@@ -585,10 +585,10 @@ def main(args) :
                             accelerator.save_state(save_path)
                             print(f"Saved state to {save_path}")
 
-                logs = {"step_loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
+                logs = {"step_loss": loss.detach().item(), "lr": args.lr_scheduler.get_last_lr()[0]}
                 progress_bar.set_postfix(**logs)
 
-                if global_step >= max_train_steps:
+                if global_step >= args.max_train_steps:
                     break
 
             if accelerator.is_main_process:
@@ -599,7 +599,7 @@ def main(args) :
                     args.pretrained_model_name_or_path,
                     unet=accelerator.unwrap_model(unet),
                     revision=args.revision,
-                    torch_dtype=weight_dtype,
+                    torch_dtype=args.weight_dtype,
                 )
                 pipeline = pipeline.to(accelerator.device)
                 pipeline.set_progress_bar_config(disable=True)
@@ -626,7 +626,7 @@ def main(args) :
         # Final inference
         # Load previous pipeline
         pipeline = DiffusionPipeline.from_pretrained(
-            args.pretrained_model_name_or_path, revision=args.revision, torch_dtype=weight_dtype
+            args.pretrained_model_name_or_path, revision=args.revision, torch_dtype=args.weight_dtype
         )
         pipeline = pipeline.to(accelerator.device)
 
@@ -643,3 +643,67 @@ def main(args) :
 
 
         accelerator.end_training()
+        
+if __name__ == "__main__":
+    import sys
+    abs_path = os.path.abspath(__file__)
+    os.chdir(os.path.dirname(abs_path)) # execute from here
+    print(os.getcwd())
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--tuning_config_path', type=str, default='tuning_config.json', help = "tuning config path")
+    parser.add_argument('--gradient_accumulation_steps', type=int, default=1, help = "")
+    parser.add_argument('--mixed_precision', type=str, default=None, help="")
+    parser.add_argument('--report_to', type=str, default=None, help="")
+    parser.add_argument('--accelerator_project_config', type=str, default=None, help = "tuning config path")
+    parser.add_argument('--seed', type=int, default=42, help = "")
+    parser.add_argument('--output_dir', type=str, default="./lora_trained", help="")
+    parser.add_argument('--pretrained_model_name_or_path', type=str, default='runwayml/stable-diffusion-v1-5', help="")
+    parser.add_argument('--revision', type=str, default=None, help = "tuning config path")
+    parser.add_argument('--variant', type=str, default=None, help = "")
+    parser.add_argument('--rank', type=int, default=1, help="")
+    parser.add_argument('--non_ema_revision', type=str, default=None, help="")
+    parser.add_argument('--gradient_checkpointing', type=bool, default=True, help = "tuning config path")
+    parser.add_argument('--scale_lr', type=int, default=None, help = "")
+    parser.add_argument('--learning_rate', type=float, default=1e-4, help="")
+    parser.add_argument('--train_batch_size', type=int, default=1, help="")
+    
+    parser.add_argument('--adam_beta1', type=float, default=0.9, help="")
+    parser.add_argument('--adam_beta2', type=float, default=0.999, help = "tuning config path")
+    parser.add_argument('--adam_weight_decay', type=float, default=1e-2, help = "")
+    parser.add_argument('--adam_epsilon', type=float, default=1e-08, help="")
+    parser.add_argument('--dataset_name', type=str, default="lambdalabs/pokemon-blip-captions", help="")
+    parser.add_argument('--train_data_dir', type=str, default=None, help = "tuning config path")
+    parser.add_argument('--dataset_config_name', type=str, default=None, help = "")
+    parser.add_argument('--cache_dir', type=str, default=None, help="")
+    parser.add_argument('--image_column', type=str, default="image", help="")
+    
+    parser.add_argument('--caption_column', type=str, default="text", help="")
+    parser.add_argument('--resolution', type=int, default=512, help = "tuning config path")
+    parser.add_argument('--center_crop', type=bool, default=False, help = "")
+    parser.add_argument('--random_flip', type=bool, default=True, help="")
+    parser.add_argument('--max_train_samples', type=str, default=None, help="")
+    parser.add_argument('--dataloader_num_workers', type=int, default=0, help = "tuning config path")
+    parser.add_argument('--max_train_steps', type=int, default=10, help = "")
+    parser.add_argument('--num_train_epochs', type=int, default=None, help="")
+    parser.add_argument('--lr_warmup_steps', type=int, default=0, help="")
+    
+    parser.add_argument('--lr_scheduler', type=str, default="constant", help="")
+    parser.add_argument('--resume_from_checkpoint', type=str, default=None, help = "tuning config path")
+    parser.add_argument('--noise_offset', type=str, default=None, help = "")
+    parser.add_argument('--input_perturbation', type=int, default=0, help="")
+    parser.add_argument('--prediction_type', type=str, default=None, help="")
+    parser.add_argument('--snr_gamma', type=int, default=None, help = "tuning config path")
+    parser.add_argument('--max_grad_norm', type=float, default=1.0, help = "")
+    parser.add_argument('--checkpointing_steps', type=int, default=10, help="")
+    parser.add_argument('--checkpoints_total_limit', type=str, default=None, help="")
+    
+    parser.add_argument('--validation_prompt', type=str, default="A pokemon with blue eyes", help = "tuning config path")
+    parser.add_argument('--validation_epochs', type=int, default=5, help = "")
+    parser.add_argument('--weight_dtype', type=str, default=torch.float32, help="")
+    parser.add_argument('--num_validation_images', type=int, default=3, help="")
+    
+    
+    
+    
+    args = parser.parse_args()
+    main(args)
