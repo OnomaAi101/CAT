@@ -19,195 +19,22 @@ import random
 import math
 from tqdm import tqdm
 import shutil
-import wandb
-import argparse # 추가 (240126)
+import argparse
 import json
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 #check_min_version("0.26.0.dev0")
 
-
-# Config File Update
-def update_config(tuning_config_path:str) -> None:
-    """
-    replace old keys with new keys
-    """
-    keys_to_replace = {
-        "CUDA_VISIBLE_DEVICES" : "cuda_device",
-        "PORT": "port"
-    }
-    with open(tuning_config_path, 'r', encoding='utf-8') as f:
-        tuning_config_new=json.load(f)
-    for keys in keys_to_replace:
-        if keys in tuning_config_new:
-            tuning_config_new[keys_to_replace[keys]] = tuning_config_new[keys]
-            del tuning_config_new[keys]
-    with open(tuning_config_path, 'w', encoding='utf-8') as f:
-        json.dump(tuning_config_new, f, indent=4)
-    
-def generate_random_string(length:int=6) -> str:
-    """
-    Generates random string of length 6
-    """
-    # pick 10 + 26 = 36 characters
-    characters_to_use = '0123456789abcdefghijklmnopqrstuvwxyz'
-    return ''.join(random.choice(characters_to_use) for _ in range(length))
-
-
-def convert_relative_path_to_absolute_path(dict_config:dict):
-    """
-    dict_config: dict of configs
-    Converts relative path to absolute path
-    """
-    for key, value in dict_config.items():
-        if key in ['target_path', 'temp_dir', 'images_folder', 'model_file', 'prompt_path']:
-            dict_config[key] = os.path.abspath(value)
-    return dict_config
-
-def generate_tuning_config(config_dict, **modified_kwargs) -> dict:
-    """
-    modified_kwargs: dict of key, value pairs to be modified from default_configs
-    """
-    new_config = config_dict.copy()
-    for keys in config_dict.keys():
-        # remove _list
-        if keys.endswith('_list'):
-            del new_config[keys]
-    new_config.update(modified_kwargs)
-    return new_config
-
-def load_tuning_config(config_path:str):
-    """
-    config_path: path to json file containing default configs
-    Loads default configs from json file, and returns a dict of configs
-    """
-    tuning_config = {
-        "project_name_base" : "CAT",
-        "gradient_accumulation_steps" : 1,
-        "mixed_precision" : "fp16",
-        "report_to" : None,
-        "accelerator_project_config" : None,
-        "seed" : 42,
-        "output_dir" : "./lora_trained",
-        "pretrained_model_name_or_path" : "runwayml/stable-diffusion-v1-5",
-        "revision" : None,
-        "variant" : None,
-        "rank" : 1,
-        "non_ema_revision" : None,
-        "gradient_checkpointing" : True,
-        "scale_lr" : None,
-        "learning_rate" : 1e-4,
-        "train_batch_size" : 1,
-        "adam_beta1" : 0.9,
-        "adam_beta2" : 0.999,
-        "adam_weight_decay" : 1e-2,
-        "adam_epsilon" : 1e-08,
-        "dataset_name" : "lambdalabs/pokemon-blip-captions",
-        "train_data_dir" : None,
-        "dataset_config_name" : None,
-        "cache_dir" : None,
-        "image_column" : "image",
-        "caption_column" : "text",
-        "resolution" : 512,
-        "center_crop" : None,
-        "random_flip" : True,
-        "max_train_samples" :None,
-        "dataloader_num_workers" : 0,
-        "max_train_steps" : 10,
-        "num_train_epochs" : None,
-        "lr_warmup_steps" : 0,
-        "lr_scheduler" : "constant",
-        "resume_from_checkpoint" : None,
-        "noise_offset" : None,
-        "input_perturbation" : 0,
-        "prediction_type" : None,
-        "snr_gamma" : None,
-        "max_grad_norm" : 1.0,
-        "checkpoints_total_limit" : None,
-        "validation_prompt" : "A pokemon with blue eyes",
-        "validation_epochs" : 5,
-        "weight_dtype" : "torch.float32",
-        "num_validation_images" : 3,
-        "process_title": "CAT"
-            }
-    update_config(config_path)
-    try:
-        with open(config_path, 'r', encoding='utf-8') as f:
-            tuning_config_loaded = json.load(f)
-    except FileNotFoundError:
-        print("Couldn't load config file")
-        if config_path != '':
-            raise FileNotFoundError(f"Couldn't load config file at {config_path}")
-        else:
-            tuning_config_loaded = {}
-    except json.JSONDecodeError as decodeException:
-        print("Malformed json file")
-        if config_path != '':
-            raise json.JSONDecodeError(f"Malformed json file at {config_path}", decodeException.doc, decodeException.pos)
-        else:
-            tuning_config_loaded = {}
-    for keys in tuning_config:
-        if keys not in tuning_config_loaded:
-            # check if list exists instead, then skip
-            tuning_config_loaded[keys] = tuning_config[keys]
-    tuning_config = tuning_config_loaded
-    return tuning_config
-
-# generate_config('unet_lr' : 1e-5) -> returns new config modified with unet lr
-
-##---------------------------------------------------------------------------------------------------------------#
-#args
 DATASET_NAME_MAPPING = {
     "lambdalabs/pokemon-blip-captions": ("image", "text"),
 }
-# gradient_accumulation_steps = 1,
-# mixed_precision = None
-# report_to = None
-# accelerator_project_config = None
-# seed = 42
-# output_dir = "./lora_trained"
-# pretrained_model_name_or_path = "runwayml/stable-diffusion-v1-5"
-# revision = None
-# variant = None
-# rank = 1
-# non_ema_revision = None
-# gradient_checkpointing = True
-# scale_lr = None
-# learning_rate = 1e-4
-# train_batch_size = 1
-# adam_beta1 = 0.9
-# adam_beta2 = 0.999
-# adam_weight_decay = 1e-2
-# adam_epsilon = 1e-08
-# dataset_name = "lambdalabs/pokemon-blip-captions"
-# train_data_dir = None ##
-# dataset_config_name = None ##
-# cache_dir = None ##
-# image_column = "image"
-# caption_column = "text"
-# resolution = 512
-# center_crop = False #
-# random_flip = True #
-# max_train_samples = None #
-# dataloader_num_workers = 0
-# max_train_steps = 10
-# num_train_epochs = None ##
-# lr_warmup_steps = 0
-lr_scheduler = "constant"
-resume_from_checkpoint = None
-noise_offset = None
-# input_perturbation = 0
-prediction_type = None
-snr_gamma = None
-# max_grad_norm = 1.0
-# checkpointing_steps = max_train_steps
-checkpoints_total_limit = None
-# validation_prompt = "A pokemon with blue eyes"
-# validation_epochs = 5
-weight_dtype = torch.float32
-# num_validation_images = 3
 
 def main(args) :
+    if args.weight_dtype == "torch.float16":
+        args.weight_dtype = torch.float16
+    elif args.weight_dtype == "torch.float32":
+        args.weight_dtype = torch.float32
+
     #creating accelerator instance
     accelerator = accelerate.Accelerator(
             gradient_accumulation_steps=args.gradient_accumulation_steps,
@@ -216,6 +43,7 @@ def main(args) :
             project_config=args.accelerator_project_config
         )
     #setting seed
+    
     set_seed(args.seed)
 
     checkpointing_steps = args.max_train_steps
@@ -485,9 +313,9 @@ def main(args) :
 
                 # Sample noise that we'll add to the latents
                 noise = torch.randn_like(latents)
-                if noise_offset:
+                if args.noise_offset:
                     # https://www.crosslabs.org//blog/diffusion-with-offset-noise
-                    noise += noise_offset * torch.randn(
+                    noise += args.noise_offset * torch.randn(
                         (latents.shape[0], latents.shape[1], 1, 1), device=latents.device
                     )
                 if args.input_perturbation:
@@ -508,9 +336,9 @@ def main(args) :
                 encoder_hidden_states = text_encoder(batch["input_ids"], return_dict=False)[0]
 
                 # Get the target for loss depending on the prediction type
-                if prediction_type is not None:
+                if args.prediction_type is not None:
                     # set prediction_type of scheduler if defined
-                    noise_scheduler.register_to_config(prediction_type=prediction_type)
+                    noise_scheduler.register_to_config(prediction_type=args.prediction_type)
 
                 if noise_scheduler.config.prediction_type == "epsilon":
                     target = noise
@@ -522,7 +350,7 @@ def main(args) :
                 # Predict the noise residual and compute loss
                 model_pred = unet(noisy_latents, timesteps, encoder_hidden_states, return_dict=False)[0]
 
-                if snr_gamma is None:
+                if args.snr_gamma is None:
                     loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
                 else:
                     # Compute loss-weights as per Section 3.4 of https://arxiv.org/abs/2303.09556.
@@ -533,7 +361,7 @@ def main(args) :
                         # Velocity objective requires that we add one to SNR values before we divide by them.
                         snr = snr + 1
                     mse_loss_weights = (
-                        torch.stack([snr, snr_gamma * torch.ones_like(timesteps)], dim=1).min(dim=1)[0] / snr
+                        torch.stack([snr, args.snr_gamma * torch.ones_like(timesteps)], dim=1).min(dim=1)[0] / snr
                     )
 
                     loss = F.mse_loss(model_pred.float(), target.float(), reduction="none")
@@ -562,14 +390,14 @@ def main(args) :
                     if global_step % checkpointing_steps == 0:
                         if accelerator.is_main_process:
                             # _before_ saving state, check if this save would set us over the `checkpoints_total_limit`
-                            if checkpoints_total_limit is not None:
+                            if args.checkpoints_total_limit is not None:
                                 checkpoints = os.listdir(args.output_dir)
                                 checkpoints = [d for d in checkpoints if d.startswith("checkpoint")]
                                 checkpoints = sorted(checkpoints, key=lambda x: int(x.split("-")[1]))
 
                                 # before we save the new checkpoint, we need to have at _most_ `checkpoints_total_limit - 1` checkpoints
-                                if len(checkpoints) >= checkpoints_total_limit:
-                                    num_to_remove = len(checkpoints) - checkpoints_total_limit + 1
+                                if len(checkpoints) >= args.checkpoints_total_limit:
+                                    num_to_remove = len(checkpoints) - args.checkpoints_total_limit + 1
                                     removing_checkpoints = checkpoints[0:num_to_remove]
 
                                     print(
@@ -641,14 +469,9 @@ def main(args) :
         for _ in range(args.num_validation_images):
             images.append(pipeline(args.validation_prompt, num_inference_steps=30, generator=generator).images[0])
 
-
         accelerator.end_training()
         
 if __name__ == "__main__":
-    import sys
-    abs_path = os.path.abspath(__file__)
-    os.chdir(os.path.dirname(abs_path)) # execute from here
-    print(os.getcwd())
     parser = argparse.ArgumentParser()
     parser.add_argument('--tuning_config_path', type=str, default='tuning_config.json', help = "tuning config path")
     parser.add_argument('--gradient_accumulation_steps', type=int, default=1, help = "")
@@ -701,9 +524,9 @@ if __name__ == "__main__":
     parser.add_argument('--validation_epochs', type=int, default=5, help = "")
     parser.add_argument('--weight_dtype', type=str, default=torch.float32, help="")
     parser.add_argument('--num_validation_images', type=int, default=3, help="")
-    
-    
-    
-    
     args = parser.parse_args()
+    with open(args.tuning_config_path) as f:
+        t_args = argparse.Namespace()
+        t_args.__dict__.update(json.load(f))
+        args = parser.parse_args(namespace=t_args)
     main(args)
