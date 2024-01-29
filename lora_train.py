@@ -473,7 +473,7 @@ def main(args) :
         
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--tuning_config_path', type=str, default='tuning_config.json', help = "tuning config path")
+    parser.add_argument('--tuning_config_path', type=str, default='./configs/tuning_config.json', help = "tuning config path")
     parser.add_argument('--gradient_accumulation_steps', type=int, default=1, help = "")
     parser.add_argument('--mixed_precision', type=str, default=None, help="")
     parser.add_argument('--report_to', type=str, default=None, help="")
