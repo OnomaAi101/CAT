@@ -9,7 +9,7 @@ DATASET_NAME_MAPPING = {
     "lambdalabs/pokemon-blip-captions": ("image", "text"),
 }
 
-def import_from_hub(dataset_name, dataset_config_name, train_data_dir, cache_dir):
+def import_from_hub(dataset_name, dataset_config_name, train_data_dir, cache_dir, image_column, caption_column):
     if dataset_name is not None:
             # Downloading and loading a dataset from the hub.
             dataset = load_dataset(
@@ -47,7 +47,7 @@ def import_from_hub(dataset_name, dataset_config_name, train_data_dir, cache_dir
             raise ValueError(
                 f"--caption_column' value '{caption_column}' needs to be one of: {', '.join(column_names)}"
     )
-    return image_column, caption_column
+    return dataset, image_column, caption_column
 
 #tag tokenizing
 def tokenize_captions(examples, caption_column, tokenizer, is_train=True):

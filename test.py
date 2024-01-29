@@ -3,16 +3,10 @@ import torch
 import torch.nn.functional as F
 import os
 from accelerate.utils import set_seed
-from packaging import version
-from transformers import CLIPTokenizer, CLIPTextModel
-from diffusers import DDPMScheduler, AutoencoderKL, UNet2DConditionModel, DiffusionPipeline
-from diffusers.utils import check_min_version
-from diffusers.loaders import AttnProcsLayers
+from diffusers import DiffusionPipeline
 from diffusers.optimization import get_scheduler
 from diffusers.training_utils import compute_snr
 from diffusers.utils.torch_utils import is_compiled_module
-from diffusers.models.attention_processor import LoRAAttnProcessor
-from datasets import load_dataset
 from torchvision import transforms
 import numpy as np
 import random
@@ -21,10 +15,8 @@ from tqdm import tqdm
 import shutil
 import argparse
 import json
-from utils.train_utils import import_model
-
-# Will error if the minimal version of diffusers is not installed. Remove at your own risks.
-#check_min_version("0.26.0.dev0")
+from utils.train_utils import import_model, get_optimizer
+from utils.data_utils import import_from_hub, tokenize_captions
 
 DATASET_NAME_MAPPING = {
     "lambdalabs/pokemon-blip-captions": ("image", "text"),
@@ -42,10 +34,12 @@ def main(args) :
             mixed_precision=args.mixed_precision,
             log_with=args.report_to,
             project_config=args.accelerator_project_config
-        ) 
+    ) 
+    
     set_seed(args.seed)
 
     checkpointing_steps = args.max_train_steps
+
     #creating model repository
     if accelerator.is_main_process:
         os.makedirs(args.output_dir, exist_ok=True)
@@ -57,74 +51,24 @@ def main(args) :
                 learning_rate * args.gradient_accumulation_steps * args.train_batch_size * accelerator.num_processes
     )
 
-    optimizer_cls = torch.optim.AdamW
-
-    optimizer = optimizer_cls(
-            layers_to_train.parameters(),
-            lr=args.learning_rate,
-            betas=(args.adam_beta1, args.adam_beta2),
-            weight_decay=args.adam_weight_decay,
-            eps=args.adam_epsilon
+    optimizer = get_optimizer(
+            args.learning_rate,
+            args.adam_beta1, 
+            args.adam_beta2,
+            args.adam_weight_decay,
+            args.adam_epsilon,
+            layers_to_train=layers_to_train,
     )
 
     #getting dataset 
-
-    if args.dataset_name is not None:
-            # Downloading and loading a dataset from the hub.
-            dataset = load_dataset(
-                args.dataset_name,
-                args.dataset_config_name,
-                cache_dir=args.cache_dir,
-                data_dir=args.train_data_dir,
+    dataset, image_column, caption_column = import_from_hub(
+            args.dataset_name,
+            args.dataset_config_name,
+            args.train_data_dir,
+            args.cache_dir,
+            args.image_column,
+            args.caption_column,
     )
-    else:
-            data_files = {}
-            if args.train_data_dir is not None:
-                data_files["train"] = os.path.join(args.train_data_dir, "**")
-            dataset = load_dataset(
-                "imagefolder",
-                data_files=data_files,
-                cache_dir=args.cache_dir)
-
-    column_names = dataset["train"].column_names
-
-    dataset_columns = DATASET_NAME_MAPPING.get(args.dataset_name, None)
-
-    if args.image_column is None:
-        args.image_column = dataset_columns[0] if dataset_columns is not None else column_names[0]
-    else:
-        args.image_column = args.image_column
-        if args.image_column not in column_names:
-            raise ValueError(
-                f"--image_column' value '{args.image_column}' needs to be one of: {', '.join(column_names)}"
-            )
-    if args.caption_column is None:
-        args.caption_column = dataset_columns[1] if dataset_columns is not None else column_names[1]
-    else:
-        args.caption_column = args.caption_column
-        if args.caption_column not in column_names:
-            raise ValueError(
-                f"--caption_column' value '{args.caption_column}' needs to be one of: {', '.join(column_names)}"
-            )
-
-    # Preprocessing the datasets.
-    # We need to tokenize input captions and transform the images.
-    def tokenize_captions(examples, is_train=True):
-        captions = []
-        for caption in examples[args.caption_column]:
-            if isinstance(caption, str):
-                captions.append(caption)
-            elif isinstance(caption, (list, np.ndarray)):
-                # take a random caption if there are multiple
-                captions.append(random.choice(caption) if is_train else caption[0])
-            else:
-                raise ValueError(
-                    f"Caption column `{args.caption_column}` should contain either strings or lists of strings."
-                )
-        inputs = tokenizer(
-            captions, max_length=tokenizer.model_max_length, padding="max_length", truncation=True, return_tensors="pt"
-        )
-        return inputs.input_ids
 
     # Preprocessing the datasets.
     train_transforms = transforms.Compose(
