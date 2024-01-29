@@ -21,6 +21,7 @@ from tqdm import tqdm
 import shutil
 import argparse
 import json
+from utils.train_utils import import_model
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 #check_min_version("0.26.0.dev0")
@@ -41,9 +42,7 @@ def main(args) :
             mixed_precision=args.mixed_precision,
             log_with=args.report_to,
             project_config=args.accelerator_project_config
-        )
-    #setting seed
-    
+        ) 
     set_seed(args.seed)
 
     checkpointing_steps = args.max_train_steps
@@ -51,48 +50,7 @@ def main(args) :
     if accelerator.is_main_process:
         os.makedirs(args.output_dir, exist_ok=True)
 
-    #load scheduler 
-    noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
-    tokenizer = CLIPTokenizer.from_pretrained(args.pretrained_model_name_or_path, subfolder="tokenizer", revision=args.revision)
-    #load vae, text encoder and unet model
-    text_encoder = CLIPTextModel.from_pretrained(
-                args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision, variant=args.variant
-            )
-    vae = AutoencoderKL.from_pretrained(
-                args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision, variant=args.variant
-            )
-
-    unet = UNet2DConditionModel.from_pretrained(
-            args.pretrained_model_name_or_path, subfolder="unet", revision=args.non_ema_revision
-    )
-    #freeze vae and text encoder and set to model to trainable mode 
-
-    vae.requires_grad_(False)
-    text_encoder.requires_grad_(False)
-    unet.requires_grad_(False)
-
-    # Set correct lora layers
-    lora_attn_procs = {}
-    for name in unet.attn_processors.keys():
-        cross_attention_dim = None if name.endswith("attn1.processor") else unet.config.cross_attention_dim
-        if name.startswith("mid_block"):
-            hidden_size = unet.config.block_out_channels[-1]
-        elif name.startswith("up_blocks"):
-            block_id = int(name[len("up_blocks.")])
-            hidden_size = list(reversed(unet.config.block_out_channels))[block_id]
-        elif name.startswith("down_blocks"):
-            block_id = int(name[len("down_blocks.")])
-            hidden_size = unet.config.block_out_channels[block_id]
-
-        lora_attn_procs[name] = LoRAAttnProcessor(
-            hidden_size=hidden_size,
-            cross_attention_dim=cross_attention_dim,
-            rank=args.rank
-    )
-
-    unet.set_attn_processor(lora_attn_procs)
-
-    lora_layers = AttnProcsLayers(unet.attn_processors)
+    noise_scheduler, tokenizer, text_encoder, vae, unet, layers_to_train = import_model(args.pretrained_model_name_or_path, args.non_ema_revision, args.revision, args.variant, args.rank)
 
     if args.scale_lr:
             learning_rate = (
@@ -102,7 +60,7 @@ def main(args) :
     optimizer_cls = torch.optim.AdamW
 
     optimizer = optimizer_cls(
-            lora_layers.parameters(),
+            layers_to_train.parameters(),
             lr=args.learning_rate,
             betas=(args.adam_beta1, args.adam_beta2),
             weight_decay=args.adam_weight_decay,
@@ -473,7 +431,7 @@ def main(args) :
         
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--tuning_config_path', type=str, default='tuning_config.json', help = "tuning config path")
+    parser.add_argument('--tuning_config_path', type=str, default='./configs/tuning_config.json', help = "tuning config path")
     parser.add_argument('--gradient_accumulation_steps', type=int, default=1, help = "")
     parser.add_argument('--mixed_precision', type=str, default=None, help="")
     parser.add_argument('--report_to', type=str, default=None, help="")
