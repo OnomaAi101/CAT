@@ -49,58 +49,87 @@ def import_from_hub(dataset_name, dataset_config_name, train_data_dir, cache_dir
     )
     return dataset, image_column, caption_column
 
-#tag tokenizing
-def tokenize_captions(examples, caption_column, tokenizer, is_train=True):
-        captions = []
-        for caption in examples[caption_column]:
-            if isinstance(caption, str):
-                captions.append(caption)
-            elif isinstance(caption, (list, np.ndarray)):
-                # take a random caption if there are multiple
-                captions.append(random.choice(caption) if is_train else caption[0])
-            else:
-                raise ValueError(
-                    f"Caption column `{caption_column}` should contain either strings or lists of strings."
+class hub_preprocessor:
+    def __init__(self, 
+                resolution,
+                center_crop,
+                random_flip,
+                caption_column, 
+                tokenizer, 
+                is_train, 
+                image_column
+                ):
+                self.resolution = resolution
+                self.center_crop = center_crop
+                self.random_flip = random_flip
+                self.caption_column = caption_column
+                self.tokenizer = tokenizer
+                self.is_train = is_train
+                self.image_column = image_column
+                self.caption_column = caption_column
+                self.train_transforms = transforms.Compose(
+                    [
+                        transforms.Resize(self.resolution, interpolation=transforms.InterpolationMode.BILINEAR),
+                        transforms.CenterCrop(self.resolution) if self.center_crop else transforms.RandomCrop(self.resolution),
+                        transforms.RandomHorizontalFlip() if self.random_flip else transforms.Lambda(lambda x: x),
+                        transforms.ToTensor(),
+                        transforms.Normalize([0.5], [0.5]),
+                    ]
                 )
-        inputs = tokenizer(
-            captions, max_length=tokenizer.model_max_length, padding="max_length", truncation=True, return_tensors="pt"
+            
+    #tag tokenizing
+    def tokenize_captions(self, examples):
+            captions = []
+            for caption in examples[self.caption_column]:
+                if isinstance(caption, str):
+                    captions.append(caption)
+                elif isinstance(caption, (list, np.ndarray)):
+                    # take a random caption if there are multiple
+                    captions.append(random.choice(caption) if self.is_train else caption[0])
+                else:
+                    raise ValueError(
+                        f"Caption column `{self.caption_column}` should contain either strings or lists of strings."
+                    )
+            inputs = self.tokenizer(
+                captions, max_length=self.tokenizer.model_max_length, padding="max_length", truncation=True, return_tensors="pt"
+            )
+            return inputs.input_ids
+
+    def preprocess_train(self, examples):
+            # Preprocessing the datasets.
+            images = [image.convert("RGB") for image in examples[self.image_column]]
+            examples["pixel_values"] = [self.train_transforms(image) for image in images]
+            examples["input_ids"] = self.tokenize_captions(examples)
+            return examples
+
+    def collate_fn(self, examples):
+            pixel_values = torch.stack([example["pixel_values"] for example in examples])
+            pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
+            input_ids = torch.stack([example["input_ids"] for example in examples])
+            return {"pixel_values": pixel_values, "input_ids": input_ids}
+
+    def get_data(self,
+                accelerator,
+                max_train_samples,
+                dataset, 
+                seed, 
+                preprocess_train, 
+                train_batch_size, 
+                dataloader_num_workers,
+                collate_fn
+                ):
+
+        with accelerator.main_process_first():
+            if max_train_samples is not None:
+                dataset["train"] = dataset["train"].shuffle(seed=seed).select(range(max_train_samples))
+            # Set the training transforms
+            train_dataset = dataset["train"].with_transform(preprocess_train)
+         #dataloader 
+        train_dataloader = torch.utils.data.DataLoader(
+            train_dataset,
+            shuffle=True,
+            collate_fn=collate_fn,
+            batch_size=train_batch_size,
+            num_workers=dataloader_num_workers
         )
-        return inputs.input_ids
-
-def preprocess_train(examples, resolution, center_crop, random_flip, image_column):
-        # Preprocessing the datasets.
-        train_transforms = transforms.Compose(
-            [
-                transforms.Resize(resolution, interpolation=transforms.InterpolationMode.BILINEAR),
-                transforms.CenterCrop(resolution) if center_crop else transforms.RandomCrop(resolution),
-                transforms.RandomHorizontalFlip() if random_flip else transforms.Lambda(lambda x: x),
-                transforms.ToTensor(),
-                transforms.Normalize([0.5], [0.5]),
-            ]
-        )
-        images = [image.convert("RGB") for image in examples[image_column]]
-        examples["pixel_values"] = [train_transforms(image) for image in images]
-        examples["input_ids"] = tokenize_captions(examples)
-        return examples
-
-def collate_fn_hub(examples):
-        pixel_values = torch.stack([example["pixel_values"] for example in examples])
-        pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
-        input_ids = torch.stack([example["input_ids"] for example in examples])
-        return {"pixel_values": pixel_values, "input_ids": input_ids}
-
-def get_dataloader(accelerator, max_train_samples, dataset, seed, collate_fn, train_batch_size, dataloader_num_workers):
-    with accelerator.main_process_first():
-        if max_train_samples is not None:
-            dataset["train"] = dataset["train"].shuffle(seed=seed).select(range(max_train_samples))
-        # Set the training transforms
-        train_dataset = dataset["train"].with_transform(preprocess_train)
-     #dataloader 
-    train_dataloader = torch.utils.data.DataLoader(
-        train_dataset,
-        shuffle=True,
-        collate_fn=collate_fn,
-        batch_size=train_batch_size,
-        num_workers=dataloader_num_workers
-    )
-    return train_dataloader
+        return train_dataset, train_dataloader

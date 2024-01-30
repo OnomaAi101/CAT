@@ -7,27 +7,19 @@ from diffusers import DiffusionPipeline
 from diffusers.optimization import get_scheduler
 from diffusers.training_utils import compute_snr
 from diffusers.utils.torch_utils import is_compiled_module
-from torchvision import transforms
-import numpy as np
-import random
 import math
 from tqdm import tqdm
 import shutil
 import argparse
 import json
 from utils.train_utils import import_model, get_optimizer
-from utils.data_utils import import_from_hub, tokenize_captions
+from utils.data_utils import import_from_hub, hub_preprocessor
 
 DATASET_NAME_MAPPING = {
     "lambdalabs/pokemon-blip-captions": ("image", "text"),
 }
 
-def main(args) :
-    if args.weight_dtype == "torch.float16":
-        args.weight_dtype = torch.float16
-    elif args.weight_dtype == "torch.float32":
-        args.weight_dtype = torch.float32
-
+def main(args):
     #creating accelerator instance
     accelerator = accelerate.Accelerator(
             gradient_accumulation_steps=args.gradient_accumulation_steps,
@@ -36,16 +28,13 @@ def main(args) :
             project_config=args.accelerator_project_config
     ) 
     
+    #accelerator seed setting
     set_seed(args.seed)
 
-    checkpointing_steps = args.max_train_steps
-
-    #creating model repository
-    if accelerator.is_main_process:
-        os.makedirs(args.output_dir, exist_ok=True)
-
+    #getting diffuser model
     noise_scheduler, tokenizer, text_encoder, vae, unet, layers_to_train = import_model(args.pretrained_model_name_or_path, args.non_ema_revision, args.revision, args.variant, args.rank)
 
+    #setting scalering factor
     if args.scale_lr:
             learning_rate = (
                 learning_rate * args.gradient_accumulation_steps * args.train_batch_size * accelerator.num_processes
@@ -67,55 +56,32 @@ def main(args) :
             args.train_data_dir,
             args.cache_dir,
             args.image_column,
-            args.caption_column,
+            args.caption_column
     )
 
-    # Preprocessing the datasets.
-    train_transforms = transforms.Compose(
-        [
-            transforms.Resize(args.resolution, interpolation=transforms.InterpolationMode.BILINEAR),
-            transforms.CenterCrop(args.resolution) if args.center_crop else transforms.RandomCrop(args.resolution),
-            transforms.RandomHorizontalFlip() if args.random_flip else transforms.Lambda(lambda x: x),
-            transforms.ToTensor(),
-            transforms.Normalize([0.5], [0.5]),
-        ]
+    #preprocessing dataset and creating dataloader
+    preprocessor = hub_preprocessor(
+            args.resolution,
+            args.center_crop,
+            args.random_flip,
+            caption_column,
+            tokenizer,
+            True,
+            image_column
     )
 
-    def preprocess_train(examples):
-        images = [image.convert("RGB") for image in examples[args.image_column]]
-        examples["pixel_values"] = [train_transforms(image) for image in images]
-        examples["input_ids"] = tokenize_captions(examples)
-        return examples
-
-    with accelerator.main_process_first():
-        if args.max_train_samples is not None:
-            dataset["train"] = dataset["train"].shuffle(seed=args.seed).select(range(args.max_train_samples))
-        # Set the training transforms
-        train_dataset = dataset["train"].with_transform(preprocess_train)
-
-    def collate_fn(examples):
-        pixel_values = torch.stack([example["pixel_values"] for example in examples])
-        pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
-        input_ids = torch.stack([example["input_ids"] for example in examples])
-        return {"pixel_values": pixel_values, "input_ids": input_ids}
-
-    #dataloader 
-    train_dataloader = torch.utils.data.DataLoader(
-        train_dataset,
-        shuffle=True,
-        collate_fn=collate_fn,
-        batch_size=args.train_batch_size,
-        num_workers=args.dataloader_num_workers
+    train_dataset, train_dataloader = preprocessor.get_data(
+        accelerator,
+        args.max_train_samples,
+        dataset,
+        args.seed,
+        preprocessor.preprocess_train,
+        args.train_batch_size,
+        args.dataloader_num_workers,
+        preprocessor.collate_fn
     )
 
-    # Scheduler and math around the number of training steps.
-    overrode_max_train_steps = False
-    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
-    if args.max_train_steps is None:
-        args.max_train_steps = num_train_epochs * num_update_steps_per_epoch
-        overrode_max_train_steps = True
-
-    args.lr_scheduler = get_scheduler(
+    lr_scheduler = get_scheduler(
         args.lr_scheduler,
         optimizer=optimizer,
         num_warmup_steps=args.lr_warmup_steps * accelerator.num_processes,
@@ -123,21 +89,31 @@ def main(args) :
     )
 
     # Prepare everything with our `accelerator`.
-    unet, optimizer, train_dataloader, args.lr_scheduler = accelerator.prepare(
-        unet, optimizer, train_dataloader, args.lr_scheduler
+    unet, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
+        unet, optimizer, train_dataloader, lr_scheduler
     )
 
-    #datatype setting
-    if accelerator.mixed_precision == "fp16":
+    if args.weight_dtype == "torch.float16":
         weight_dtype = torch.float16
-        mixed_precision = accelerator.mixed_precision
-    elif accelerator.mixed_precision == "bf16":
-        weight_dtype = torch.bfloat16
-        mixed_precision = accelerator.mixed_precision
+    elif args.weight_dtype == "torch.float32":
+        weight_dtype = torch.float32
 
+    checkpointing_steps = args.max_train_steps
+
+    #creating model repository
+    if accelerator.is_main_process:
+        os.makedirs(args.output_dir, exist_ok=True)
+    
     # Move text_encode and vae to gpu and cast to weight_dtype
-    text_encoder.to(accelerator.device, dtype=args.weight_dtype)
-    vae.to(accelerator.device, dtype=args.weight_dtype)
+    text_encoder.to(accelerator.device, dtype=weight_dtype)
+    vae.to(accelerator.device, dtype=weight_dtype)
+
+    #Scheduler and math around the number of training steps.
+    overrode_max_train_steps = False
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
+    if args.max_train_steps is None:
+        args.max_train_steps = num_train_epochs * num_update_steps_per_epoch
+        overrode_max_train_steps = True
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
@@ -155,16 +131,14 @@ def main(args) :
 
     # Train!
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
-
-    print(f"***** Running training *****")
-    print(f"  Num examples = {len(train_dataset)}")
-    print(f"  Num Epochs = {num_train_epochs}")
-    print(f"  Instantaneous batch size per device = {args.train_batch_size}")
-    print(
-        f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}"
-    )
-    print(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
-    print(f"  Total optimization steps = {args.max_train_steps}")
+    if accelerator.is_local_main_process:
+        print(f"***** Running training *****")
+        print(f"  Num examples = {len(train_dataset)}")
+        print(f"  Num Epochs = {num_train_epochs}")
+        print(f"  Instantaneous batch size per device = {args.train_batch_size}")
+        print(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
+        print(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
+        print(f"  Total optimization steps = {args.max_train_steps}")
 
     global_step = 0
     first_epoch = 0
@@ -210,7 +184,7 @@ def main(args) :
         for step, batch in enumerate(train_dataloader):
             with accelerator.accumulate(unet):
                 # Convert images to latent space
-                latents = vae.encode(batch["pixel_values"].to(args.weight_dtype)).latent_dist.sample()
+                latents = vae.encode(batch["pixel_values"].to(weight_dtype)).latent_dist.sample()
                 latents = latents * vae.config.scaling_factor
 
                 # Sample noise that we'll add to the latents
@@ -279,7 +253,7 @@ def main(args) :
                 if accelerator.sync_gradients:
                     accelerator.clip_grad_norm_(unet.parameters(), args.max_grad_norm)
                 optimizer.step()
-                args.lr_scheduler.step()
+                lr_scheduler.step()
                 optimizer.zero_grad()
 
                 # Checks if the accelerator has performed an optimization step behind the scenes
@@ -315,7 +289,7 @@ def main(args) :
                             accelerator.save_state(save_path)
                             print(f"Saved state to {save_path}")
 
-                logs = {"step_loss": loss.detach().item(), "lr": args.lr_scheduler.get_last_lr()[0]}
+                logs = {"step_loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
                 progress_bar.set_postfix(**logs)
 
                 if global_step >= args.max_train_steps:
@@ -329,7 +303,7 @@ def main(args) :
                     args.pretrained_model_name_or_path,
                     unet=accelerator.unwrap_model(unet),
                     revision=args.revision,
-                    torch_dtype=args.weight_dtype,
+                    torch_dtype=weight_dtype,
                 )
                 pipeline = pipeline.to(accelerator.device)
                 pipeline.set_progress_bar_config(disable=True)
@@ -356,7 +330,7 @@ def main(args) :
         # Final inference
         # Load previous pipeline
         pipeline = DiffusionPipeline.from_pretrained(
-            args.pretrained_model_name_or_path, revision=args.revision, torch_dtype=args.weight_dtype
+            args.pretrained_model_name_or_path, revision=args.revision, torch_dtype=weight_dtype
         )
         pipeline = pipeline.to(accelerator.device)
 
@@ -391,7 +365,6 @@ if __name__ == "__main__":
     parser.add_argument('--scale_lr', type=int, default=None, help = "")
     parser.add_argument('--learning_rate', type=float, default=1e-4, help="")
     parser.add_argument('--train_batch_size', type=int, default=1, help="")
-    
     parser.add_argument('--adam_beta1', type=float, default=0.9, help="")
     parser.add_argument('--adam_beta2', type=float, default=0.999, help = "tuning config path")
     parser.add_argument('--adam_weight_decay', type=float, default=1e-2, help = "")
@@ -401,7 +374,6 @@ if __name__ == "__main__":
     parser.add_argument('--dataset_config_name', type=str, default=None, help = "")
     parser.add_argument('--cache_dir', type=str, default=None, help="")
     parser.add_argument('--image_column', type=str, default="image", help="")
-    
     parser.add_argument('--caption_column', type=str, default="text", help="")
     parser.add_argument('--resolution', type=int, default=512, help = "tuning config path")
     parser.add_argument('--center_crop', type=bool, default=False, help = "")
