@@ -1,6 +1,5 @@
 import accelerate
 import torch
-import torch.nn.functional as F
 import os
 from accelerate.utils import set_seed
 from diffusers import DiffusionPipeline
@@ -174,8 +173,6 @@ def main(args):
                     noise += args.noise_offset * torch.randn(
                         (latents.shape[0], latents.shape[1], 1, 1), device=latents.device
                     )
-                if args.input_perturbation:
-                    new_noise = noise + args.input_perturbation * torch.randn_like(noise)
                 bsz = latents.shape[0]
                 # Sample a random timestep for each image
                 timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (bsz,), device=latents.device)
@@ -241,71 +238,46 @@ def main(args):
                                         shutil.rmtree(removing_checkpoint)
 
                             save_path = os.path.join(args.output_dir, f"checkpoint-{total_step}")
-                            accelerator.save_state(save_path)
+                            unet = unet.to(torch.float32)
+                            unet.save_attn_procs(save_path)
                             print(f"Saved state to {save_path}")
 
-                logs = {"step_loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
-                progress_bar.set_postfix(**logs)
+                            for prompt in args.validation_prompt:
+                                print(f"Running validation... \n Generating {args.num_validation_images} images with prompt:")
+                                print(f" {prompt}.")
+                                # create pipeline
+                                pipeline = DiffusionPipeline.from_pretrained(
+                                    args.pretrained_model_name_or_path,
+                                    unet=accelerator.unwrap_model(unet),
+                                    revision=args.revision,
+                                    torch_dtype=weight_dtype,
+                                )
+                                pipeline = pipeline.to(accelerator.device)
+                                pipeline.set_progress_bar_config(disable=True)
 
-                if total_step >= args.max_train_steps:
-                    break
-            
-            if accelerator.is_main_process:
-                print(f"Running validation... \n Generating {args.num_validation_images} images with prompt:")
-                for prompt in args.validation_prompt:
-                    print(f" {prompt}.")
-                    # create pipeline
-                    pipeline = DiffusionPipeline.from_pretrained(
-                        args.pretrained_model_name_or_path,
-                        unet=accelerator.unwrap_model(unet),
-                        revision=args.revision,
-                        torch_dtype=weight_dtype,
-                    )
-                    pipeline = pipeline.to(accelerator.device)
-                    pipeline.set_progress_bar_config(disable=True)
-    
-                    # run inference
-                    generator = torch.Generator(device=accelerator.device)
-                    if args.seed is not None:
-                        generator = generator.manual_seed(args.seed)
-                    images = []
-                    for _ in range(args.num_validation_images):
-                        images.append(
-                            pipeline(prompt, num_inference_steps=30, generator=generator).images[0]
-                        )
+                                # run inference
+                                generator = torch.Generator(device=accelerator.device)
+                                if args.seed is not None:
+                                    generator = generator.manual_seed(args.seed)
+                                images = []
+                                for _ in range(args.num_validation_images):
+                                    images.append(
+                                        pipeline(prompt, num_inference_steps=30, generator=generator).images[0]
+                                    )
 
-                    # save images
-                    for i, image in enumerate(images):
-                        image.save(os.path.join(args.output_dir, f"validation_{i}.png"))
-    
-                    del pipeline
-                    torch.cuda.empty_cache()
+                                # save images
+                                for i, image in enumerate(images):
+                                    image.save(os.path.join(save_path, f"{prompt}_{i}.png"))
 
-        # Create the pipeline using the trained modules and save it.
-        accelerator.wait_for_everyone()
-        if accelerator.is_main_process:
-            unet = unet.to(torch.float32)
-            unet.save_attn_procs(args.output_dir)
+                                del pipeline
+                                torch.cuda.empty_cache()
+                
+                            logs = {"step_loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
+                            progress_bar.set_postfix(**logs)
 
-        # Final inference
-        # Load previous pipeline
-        pipeline = DiffusionPipeline.from_pretrained(
-            args.pretrained_model_name_or_path, revision=args.revision, torch_dtype=weight_dtype
-        )
-        pipeline = pipeline.to(accelerator.device)
-
-        # load attention processors
-        pipeline.unet.load_attn_procs(args.output_dir)
-
-        # run inference
-        generator = torch.Generator(device=accelerator.device)
-        if args.seed is not None:
-            generator = generator.manual_seed(args.seed)
-        images = []
-        for _ in range(args.num_validation_images):
-            images.append(pipeline(args.validation_prompt, num_inference_steps=30, generator=generator).images[0])
-
-        accelerator.end_training()
+            if total_step >= args.max_train_steps:
+                accelerator.end_training()
+                break
         
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
