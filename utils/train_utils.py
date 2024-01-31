@@ -9,6 +9,8 @@ def import_model(pretrained_model_name_or_path,
                 revision, 
                 variant, 
                 non_ema_revision, 
+                accelerator,
+                weight_dtype,
                 lora_rank,
                 ):
     #load scheduler 
@@ -24,6 +26,11 @@ def import_model(pretrained_model_name_or_path,
     unet = UNet2DConditionModel.from_pretrained(
             pretrained_model_name_or_path, subfolder="unet", revision=non_ema_revision
     )
+    # Move model to gpu and cast to weight_dtype
+    unet.to(accelerator.device, dtype=weight_dtype)
+    text_encoder.to(accelerator.device, dtype=weight_dtype)
+    vae.to(accelerator.device, dtype=weight_dtype)
+
     #freeze all the parameters except the adapter
     vae.requires_grad_(False)
     text_encoder.requires_grad_(False)

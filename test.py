@@ -5,8 +5,6 @@ import os
 from accelerate.utils import set_seed
 from diffusers import DiffusionPipeline
 from diffusers.optimization import get_scheduler
-from diffusers.training_utils import compute_snr
-from diffusers.utils.torch_utils import is_compiled_module
 import math
 from tqdm import tqdm
 import shutil
@@ -14,6 +12,7 @@ import argparse
 import json
 from utils.train_utils import import_model, get_optimizer
 from utils.data_utils import import_from_hub, hub_preprocessor
+from utils.train_loops import setting_steps, get_prediction_type, snr_loss
 
 DATASET_NAME_MAPPING = {
     "lambdalabs/pokemon-blip-captions": ("image", "text"),
@@ -31,9 +30,20 @@ def main(args):
     #accelerator seed setting
     set_seed(args.seed)
 
-    #getting diffuser model
-    noise_scheduler, tokenizer, text_encoder, vae, unet, layers_to_train = import_model(args.pretrained_model_name_or_path, args.non_ema_revision, args.revision, args.variant, args.rank)
+    #setting weight dtype
+    if args.weight_dtype == "torch.float16":
+        weight_dtype = torch.float16
+    elif args.weight_dtype == "torch.float32":
+        weight_dtype = torch.float32
 
+    #getting diffuser model
+    noise_scheduler, tokenizer, text_encoder, vae, unet, layers_to_train = import_model(args.pretrained_model_name_or_path,  
+                                                                                        args.revision, 
+                                                                                        args.variant, 
+                                                                                        args.non_ema_revision,
+                                                                                        accelerator,
+                                                                                        weight_dtype,
+                                                                                        args.rank)
     #setting scalering factor
     if args.scale_lr:
             learning_rate = (
@@ -88,32 +98,21 @@ def main(args):
         num_training_steps=args.max_train_steps * accelerator.num_processes,
     )
 
+    # Scheduler and math around the number of training steps.
+    overrode_max_train_steps = False
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
+    if args.max_train_steps is None:
+        args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
+        overrode_max_train_steps = True
+    
     # Prepare everything with our `accelerator`.
-    unet, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
+    layers_to_train, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
         unet, optimizer, train_dataloader, lr_scheduler
     )
-
-    if args.weight_dtype == "torch.float16":
-        weight_dtype = torch.float16
-    elif args.weight_dtype == "torch.float32":
-        weight_dtype = torch.float32
-
-    checkpointing_steps = args.max_train_steps
 
     #creating model repository
     if accelerator.is_main_process:
         os.makedirs(args.output_dir, exist_ok=True)
-    
-    # Move text_encode and vae to gpu and cast to weight_dtype
-    text_encoder.to(accelerator.device, dtype=weight_dtype)
-    vae.to(accelerator.device, dtype=weight_dtype)
-
-    #Scheduler and math around the number of training steps.
-    overrode_max_train_steps = False
-    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
-    if args.max_train_steps is None:
-        args.max_train_steps = num_train_epochs * num_update_steps_per_epoch
-        overrode_max_train_steps = True
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
@@ -122,15 +121,11 @@ def main(args):
     # Afterwards we recalculate our number of training epochs
     num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
 
-
-    # Function for unwrapping if model was compiled with `torch.compile`.
-    def unwrap_model(model):
-        model = accelerator.unwrap_model(model)
-        model = model._orig_mod if is_compiled_module(model) else model
-        return model
-
-    # Train!
+    
+    #applying multiprocessing in batch
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
+
+    #train
     if accelerator.is_local_main_process:
         print(f"***** Running training *****")
         print(f"  Num examples = {len(train_dataset)}")
@@ -139,38 +134,22 @@ def main(args):
         print(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
         print(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
         print(f"  Total optimization steps = {args.max_train_steps}")
-
-    global_step = 0
-    first_epoch = 0
-
-    # Potentially load in the weights and states from a previous save
-    if args.resume_from_checkpoint:
-        if args.resume_from_checkpoint != "latest":
-            path = os.path.basename(args.resume_from_checkpoint)
-        else:
-            # Get the most recent checkpoint
-            dirs = os.listdir(args.output_dir)
-            dirs = [d for d in dirs if d.startswith("checkpoint")]
-            dirs = sorted(dirs, key=lambda x: int(x.split("-")[1]))
-            path = dirs[-1] if len(dirs) > 0 else None
-
-        if path is None:
-            accelerator.print(
-                f"Checkpoint '{args.resume_from_checkpoint}' does not exist. Starting a new training run."
-            )
-            args.resume_from_checkpoint = None
-            initial_global_step = 0
-        else:
-            accelerator.print(f"Resuming from checkpoint {path}")
-            accelerator.load_state(os.path.join(args.output_dir, path))
-            global_step = int(path.split("-")[1])
-
-            initial_global_step = global_step
-            first_epoch = global_step // num_update_steps_per_epoch
-
-    else:
-        initial_global_step = 0
-
+    
+    #setting steps with resuming or without resuming
+    #initiates resume_from_checkpoint = ./results/checkpoint-1000
+    initial_global_step, first_epoch = setting_steps(
+        args.resume_from_checkpoint,
+        accelerator,
+        args.output_dir,
+        num_update_steps_per_epoch
+    )
+    #total step and checkpointing steps
+    total_step = 0 
+    if args.checkpointing_steps is None:
+        checkpointing_steps = args.max_train_steps
+    else: 
+        checkpointing_steps = args.checkpointing_steps
+    #setting progress bar
     progress_bar = tqdm(
         range(0, args.max_train_steps),
         initial=initial_global_step,
@@ -180,6 +159,7 @@ def main(args):
     )
 
     for epoch in range(first_epoch, num_train_epochs):
+        unet.train()
         train_loss = 0.0
         for step, batch in enumerate(train_dataloader):
             with accelerator.accumulate(unet):
@@ -203,46 +183,21 @@ def main(args):
 
                 # Add noise to the latents according to the noise magnitude at each timestep
                 # (this is the forward diffusion process)
-                if args.input_perturbation:
-                    noisy_latents = noise_scheduler.add_noise(latents, new_noise, timesteps)
-                else:
-                    noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
+                noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
                 # Get the text embedding for conditioning
-                encoder_hidden_states = text_encoder(batch["input_ids"], return_dict=False)[0]
+                encoder_hidden_states = text_encoder(batch["input_ids"])[0]
 
                 # Get the target for loss depending on the prediction type
-                if args.prediction_type is not None:
-                    # set prediction_type of scheduler if defined
-                    noise_scheduler.register_to_config(prediction_type=args.prediction_type)
-
-                if noise_scheduler.config.prediction_type == "epsilon":
-                    target = noise
-                elif noise_scheduler.config.prediction_type == "v_prediction":
-                    target = noise_scheduler.get_velocity(latents, noise, timesteps)
-                else:
-                    raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
+                #initiate prediction_type = "epsilon" for epsilon prediction and "v_prediction" for velocity prediction
+                target = get_prediction_type(args.prediction_type, noise_scheduler, noise, latents, timesteps)
 
                 # Predict the noise residual and compute loss
-                model_pred = unet(noisy_latents, timesteps, encoder_hidden_states, return_dict=False)[0]
+                model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
 
-                if args.snr_gamma is None:
-                    loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
-                else:
-                    # Compute loss-weights as per Section 3.4 of https://arxiv.org/abs/2303.09556.
-                    # Since we predict the noise instead of x_0, the original formulation is slightly changed.
-                    # This is discussed in Section 4.2 of the same paper.
-                    snr = compute_snr(noise_scheduler, timesteps)
-                    if noise_scheduler.config.prediction_type == "v_prediction":
-                        # Velocity objective requires that we add one to SNR values before we divide by them.
-                        snr = snr + 1
-                    mse_loss_weights = (
-                        torch.stack([snr, args.snr_gamma * torch.ones_like(timesteps)], dim=1).min(dim=1)[0] / snr
-                    )
+                #apply snr_gamma
 
-                    loss = F.mse_loss(model_pred.float(), target.float(), reduction="none")
-                    loss = loss.mean(dim=list(range(1, len(loss.shape)))) * mse_loss_weights
-                    loss = loss.mean()
+                loss = snr_loss(args.snr_gamma, model_pred, target, noise_scheduler, timesteps)
 
                 # Gather the losses across all processes for logging (if we use distributed training).
                 avg_loss = accelerator.gather(loss.repeat(args.train_batch_size)).mean()
@@ -259,11 +214,11 @@ def main(args):
                 # Checks if the accelerator has performed an optimization step behind the scenes
                 if accelerator.sync_gradients:
                     progress_bar.update(1)
-                    global_step += 1
-                    accelerator.log({"train_loss": train_loss}, step=global_step)
+                    total_step += 1
+                    accelerator.log({"train_loss": train_loss}, step=total_step)
                     train_loss = 0.0
 
-                    if global_step % checkpointing_steps == 0:
+                    if total_step % checkpointing_steps == 0:
                         if accelerator.is_main_process:
                             # _before_ saving state, check if this save would set us over the `checkpoints_total_limit`
                             if args.checkpoints_total_limit is not None:
@@ -285,41 +240,46 @@ def main(args):
                                         removing_checkpoint = os.path.join(args.output_dir, removing_checkpoint)
                                         shutil.rmtree(removing_checkpoint)
 
-                            save_path = os.path.join(args.output_dir, f"checkpoint-{global_step}")
+                            save_path = os.path.join(args.output_dir, f"checkpoint-{total_step}")
                             accelerator.save_state(save_path)
                             print(f"Saved state to {save_path}")
 
                 logs = {"step_loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
                 progress_bar.set_postfix(**logs)
 
-                if global_step >= args.max_train_steps:
+                if total_step >= args.max_train_steps:
                     break
-
+            
             if accelerator.is_main_process:
                 print(f"Running validation... \n Generating {args.num_validation_images} images with prompt:")
-                print(f" {args.validation_prompt}.")
-                # create pipeline
-                pipeline = DiffusionPipeline.from_pretrained(
-                    args.pretrained_model_name_or_path,
-                    unet=accelerator.unwrap_model(unet),
-                    revision=args.revision,
-                    torch_dtype=weight_dtype,
-                )
-                pipeline = pipeline.to(accelerator.device)
-                pipeline.set_progress_bar_config(disable=True)
-
-                # run inference
-                generator = torch.Generator(device=accelerator.device)
-                if args.seed is not None:
-                    generator = generator.manual_seed(args.seed)
-                images = []
-                for _ in range(args.num_validation_images):
-                    images.append(
-                        pipeline(args.validation_prompt, num_inference_steps=30, generator=generator).images[0]
+                for prompt in args.validation_prompt:
+                    print(f" {prompt}.")
+                    # create pipeline
+                    pipeline = DiffusionPipeline.from_pretrained(
+                        args.pretrained_model_name_or_path,
+                        unet=accelerator.unwrap_model(unet),
+                        revision=args.revision,
+                        torch_dtype=weight_dtype,
                     )
+                    pipeline = pipeline.to(accelerator.device)
+                    pipeline.set_progress_bar_config(disable=True)
+    
+                    # run inference
+                    generator = torch.Generator(device=accelerator.device)
+                    if args.seed is not None:
+                        generator = generator.manual_seed(args.seed)
+                    images = []
+                    for _ in range(args.num_validation_images):
+                        images.append(
+                            pipeline(prompt, num_inference_steps=30, generator=generator).images[0]
+                        )
 
-                del pipeline
-                torch.cuda.empty_cache()
+                    # save images
+                    for i, image in enumerate(images):
+                        image.save(os.path.join(args.output_dir, f"validation_{i}.png"))
+    
+                    del pipeline
+                    torch.cuda.empty_cache()
 
         # Create the pipeline using the trained modules and save it.
         accelerator.wait_for_everyone()
@@ -383,21 +343,17 @@ if __name__ == "__main__":
     parser.add_argument('--max_train_steps', type=int, default=10, help = "")
     parser.add_argument('--num_train_epochs', type=int, default=None, help="")
     parser.add_argument('--lr_warmup_steps', type=int, default=0, help="")
-    
     parser.add_argument('--lr_scheduler', type=str, default="constant", help="")
     parser.add_argument('--resume_from_checkpoint', type=str, default=None, help = "tuning config path")
     parser.add_argument('--noise_offset', type=str, default=None, help = "")
-    parser.add_argument('--input_perturbation', type=int, default=0, help="")
     parser.add_argument('--prediction_type', type=str, default=None, help="")
     parser.add_argument('--snr_gamma', type=int, default=None, help = "tuning config path")
     parser.add_argument('--max_grad_norm', type=float, default=1.0, help = "")
-    parser.add_argument('--checkpointing_steps', type=int, default=10, help="")
+    parser.add_argument('--checkpointing_steps', type=int, default=1, help="")
     parser.add_argument('--checkpoints_total_limit', type=str, default=None, help="")
-    
-    parser.add_argument('--validation_prompt', type=str, default="A pokemon with blue eyes", help = "tuning config path")
-    parser.add_argument('--validation_epochs', type=int, default=5, help = "")
+    parser.add_argument('--validation_prompt', type=str, default=["A pokemon with blue eyes"], help = "tuning config path")
     parser.add_argument('--weight_dtype', type=str, default=torch.float32, help="")
-    parser.add_argument('--num_validation_images', type=int, default=3, help="")
+    parser.add_argument('--num_validation_images', type=int, default=1, help="")
     args = parser.parse_args()
     with open(args.tuning_config_path) as f:
         t_args = argparse.Namespace()

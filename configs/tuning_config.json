@@ -35,14 +35,12 @@
     "lr_scheduler": "constant",
     "resume_from_checkpoint": null,
     "noise_offset": null,
-    "input_perturbation": 0,
     "prediction_type": null,
     "snr_gamma": null,
     "max_grad_norm": 1.0,
-    "checkpointing_steps": 10,
+    "checkpointing_steps": null,
     "checkpoints_total_limit": null,
-    "validation_prompt": "A pokemon with blue eyes",
-    "validation_epochs": 5,
+    "validation_prompt": ["A pokemon with blue eyes"],
     "weight_dtype": "torch.float32",
     "num_validation_images": 1
 }
