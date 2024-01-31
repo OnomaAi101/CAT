@@ -262,7 +262,7 @@ def main(args):
                                 images = []
                                 for _ in range(args.num_validation_images):
                                     images.append(
-                                        pipeline(prompt, num_inference_steps=30, generator=generator).images[0]
+                                        pipeline(prompt, num_inference_steps=50, generator=generator).images[0]
                                     )
 
                                 # save images
