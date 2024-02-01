@@ -23,8 +23,10 @@ then for example
 ```bash
 mkdir ./results/pokemon_vanila_02012024
 #create a config file for this training 
+#set the output dir to the dir above
 #set max_train_step and checkpointing_steps
 #then for each checkpointing_steps, the program will save lora
+#also validation prompts can be added
 touch ./results/pokemon_vanila_02012024/tuning_config.json
 #then run train 
 accelerate launch vanila_lora_train.py --tuning_config_path ./results/pokemon_vanila_02012024/tuning_config.json
