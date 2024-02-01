@@ -236,7 +236,7 @@ if __name__ == "__main__":
     parser.add_argument('--report_to', type=str, default=None, help="")
     parser.add_argument('--accelerator_project_config', type=str, default=None, help = "tuning config path")
     parser.add_argument('--seed', type=int, default=42, help = "")
-    parser.add_argument('--output_dir', type=str, default="./results", help="")
+    parser.add_argument('--output_dir', type=str, default="./lora_trained", help="")
     parser.add_argument('--pretrained_model_name_or_path', type=str, default='runwayml/stable-diffusion-v1-5', help="")
     parser.add_argument('--revision', type=str, default=None, help = "tuning config path")
     parser.add_argument('--variant', type=str, default=None, help = "")

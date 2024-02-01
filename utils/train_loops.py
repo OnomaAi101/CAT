@@ -136,7 +136,8 @@ def save_and_validate(accelerator,
                     print(f" {prompt}.")
                     # create pipeline
                     pipeline = AutoPipelineForText2Image.from_pretrained(pretrained_model_name_or_path, 
-                                                                            torch_dtype=weight_dtype)
+                                                                            torch_dtype=weight_dtype,
+                                                                            safety_checker = None)
                     pipeline.load_lora_weights(save_path, weight_name="pytorch_lora_weights.safetensors")
                     pipeline = pipeline.to(accelerator.device)
 
