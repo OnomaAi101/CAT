@@ -11,9 +11,6 @@ from utils.train_utils import import_model, get_optimizer
 from utils.data_utils import import_from_hub, hub_preprocessor
 from utils.train_loops import setting_steps, get_prediction_type, snr_loss, save_and_validate
 
-DATASET_NAME_MAPPING = {
-    "lambdalabs/pokemon-blip-captions": ("image", "text"),
-}
 
 def main(args):
     #creating accelerator instance
@@ -104,7 +101,7 @@ def main(args):
     
     # Prepare everything with our `accelerator`.
     layers_to_train, optimizer, train_dataloader, lr_scheduler, args.validation_prompt = accelerator.prepare(
-        unet, optimizer, train_dataloader, lr_scheduler, args.validation_prompt
+        layers_to_train, optimizer, train_dataloader, lr_scheduler, args.validation_prompt
     )
 
     #creating model repository
