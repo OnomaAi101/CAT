@@ -1,6 +1,9 @@
 import os 
+from tqdm import tqdm
 import torch
 import torch.nn.functional as F
+import shutil
+from diffusers import AutoPipelineForText2Image
 from diffusers.training_utils import compute_snr
 
 def setting_steps(resume_from_checkpoint,
@@ -77,3 +80,84 @@ def snr_loss(snr_gamma,
         loss = loss.mean(dim=list(range(1, len(loss.shape)))) * mse_loss_weights
         loss = loss.mean()
     return loss
+
+def save_and_validate(accelerator, 
+                    progress_bar,
+                    total_step,
+                    train_loss,
+                    checkpointing_steps,
+                    checkpoints_total_limit,
+                    output_dir,
+                    unet,
+                    validation_prompt,
+                    num_validation_images,
+                    pretrained_model_name_or_path,
+                    weight_dtype,
+                    seed,
+                    loss,
+                    lr_scheduler,
+                    ):
+    # Checks if the accelerator has performed an optimization step behind the scenes
+    if accelerator.sync_gradients:
+        progress_bar.update(1)
+        total_step += 1
+        accelerator.log({"train_loss": train_loss}, step=total_step)
+        train_loss = 0.0
+
+        if total_step % checkpointing_steps == 0:
+            if accelerator.is_main_process:
+                # _before_ saving state, check if this save would set us over the `checkpoints_total_limit`
+                if checkpoints_total_limit is not None:
+                    checkpoints = os.listdir(output_dir)
+                    checkpoints = [d for d in checkpoints if d.startswith("checkpoint")]
+                    checkpoints = sorted(checkpoints, key=lambda x: int(x.split("-")[1]))
+
+                    # before we save the new checkpoint, we need to have at _most_ `checkpoints_total_limit - 1` checkpoints
+                    if len(checkpoints) >= checkpoints_total_limit:
+                        num_to_remove = len(checkpoints) - checkpoints_total_limit + 1
+                        removing_checkpoints = checkpoints[0:num_to_remove]
+
+                        print(
+                            f"{len(checkpoints)} checkpoints already exist, removing {len(removing_checkpoints)} checkpoints"
+                        )
+                        print(f"removing checkpoints: {', '.join(removing_checkpoints)}")
+
+                        for removing_checkpoint in removing_checkpoints:
+                            removing_checkpoint = os.path.join(output_dir, removing_checkpoint)
+                            shutil.rmtree(removing_checkpoint)
+
+                    save_path = os.path.join(output_dir, f"checkpoint-{total_step}")
+                    unet = unet.to(torch.float32)
+                    unet.save_attn_procs(save_path)
+                    print(f"Saved state to {save_path}")
+
+                for prompt in tqdm(validation_prompt, desc="Validation"):
+                    print(f"Running validation... \n Generating {num_validation_images} images with prompt:")
+                    print(f" {prompt}.")
+                    # create pipeline
+                    pipeline = AutoPipelineForText2Image.from_pretrained(pretrained_model_name_or_path, 
+                                                                            torch_dtype=weight_dtype)
+                    pipeline.load_lora_weights(save_path, weight_name="pytorch_lora_weights.safetensors")
+                    pipeline = pipeline.to(accelerator.device)
+
+                    # run inference
+                    generator = torch.Generator(device=accelerator.device)
+                    if seed is not None:
+                        generator = generator.manual_seed(seed)
+                    images = []
+                    for _ in range(num_validation_images):
+                        images.append(
+                            pipeline(prompt, num_inference_steps=50, generator=generator).images[0]
+                        )
+
+                    # save images
+                    for i, image in enumerate(images):
+                        image.save(os.path.join(save_path, f"{prompt}_{i}.png"))
+
+                    del pipeline
+                    torch.cuda.empty_cache()
+
+                    logs = {"step_loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
+                    progress_bar.set_postfix(**logs)
+
+    return total_step

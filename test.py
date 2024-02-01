@@ -2,16 +2,14 @@ import accelerate
 import torch
 import os
 from accelerate.utils import set_seed
-from diffusers import DiffusionPipeline
 from diffusers.optimization import get_scheduler
 import math
 from tqdm import tqdm
-import shutil
 import argparse
 import json
 from utils.train_utils import import_model, get_optimizer
 from utils.data_utils import import_from_hub, hub_preprocessor
-from utils.train_loops import setting_steps, get_prediction_type, snr_loss
+from utils.train_loops import setting_steps, get_prediction_type, snr_loss, save_and_validate
 
 DATASET_NAME_MAPPING = {
     "lambdalabs/pokemon-blip-captions": ("image", "text"),
@@ -105,8 +103,8 @@ def main(args):
         overrode_max_train_steps = True
     
     # Prepare everything with our `accelerator`.
-    layers_to_train, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-        unet, optimizer, train_dataloader, lr_scheduler
+    layers_to_train, optimizer, train_dataloader, lr_scheduler, args.validation_prompt = accelerator.prepare(
+        unet, optimizer, train_dataloader, lr_scheduler, args.validation_prompt
     )
 
     #creating model repository
@@ -192,8 +190,7 @@ def main(args):
                 # Predict the noise residual and compute loss
                 model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
 
-                #apply snr_gamma
-
+                #apply snr_gamma_loss
                 loss = snr_loss(args.snr_gamma, model_pred, target, noise_scheduler, timesteps)
 
                 # Gather the losses across all processes for logging (if we use distributed training).
@@ -209,71 +206,23 @@ def main(args):
                 optimizer.zero_grad()
 
                 # Checks if the accelerator has performed an optimization step behind the scenes
-                if accelerator.sync_gradients:
-                    progress_bar.update(1)
-                    total_step += 1
-                    accelerator.log({"train_loss": train_loss}, step=total_step)
-                    train_loss = 0.0
-
-                    if total_step % checkpointing_steps == 0:
-                        if accelerator.is_main_process:
-                            # _before_ saving state, check if this save would set us over the `checkpoints_total_limit`
-                            if args.checkpoints_total_limit is not None:
-                                checkpoints = os.listdir(args.output_dir)
-                                checkpoints = [d for d in checkpoints if d.startswith("checkpoint")]
-                                checkpoints = sorted(checkpoints, key=lambda x: int(x.split("-")[1]))
-
-                                # before we save the new checkpoint, we need to have at _most_ `checkpoints_total_limit - 1` checkpoints
-                                if len(checkpoints) >= args.checkpoints_total_limit:
-                                    num_to_remove = len(checkpoints) - args.checkpoints_total_limit + 1
-                                    removing_checkpoints = checkpoints[0:num_to_remove]
-
-                                    print(
-                                        f"{len(checkpoints)} checkpoints already exist, removing {len(removing_checkpoints)} checkpoints"
-                                    )
-                                    print(f"removing checkpoints: {', '.join(removing_checkpoints)}")
-
-                                    for removing_checkpoint in removing_checkpoints:
-                                        removing_checkpoint = os.path.join(args.output_dir, removing_checkpoint)
-                                        shutil.rmtree(removing_checkpoint)
-
-                            save_path = os.path.join(args.output_dir, f"checkpoint-{total_step}")
-                            unet = unet.to(torch.float32)
-                            unet.save_attn_procs(save_path)
-                            print(f"Saved state to {save_path}")
-
-                            for prompt in args.validation_prompt:
-                                print(f"Running validation... \n Generating {args.num_validation_images} images with prompt:")
-                                print(f" {prompt}.")
-                                # create pipeline
-                                pipeline = DiffusionPipeline.from_pretrained(
-                                    args.pretrained_model_name_or_path,
-                                    unet=accelerator.unwrap_model(unet),
-                                    revision=args.revision,
-                                    torch_dtype=weight_dtype,
-                                )
-                                pipeline = pipeline.to(accelerator.device)
-                                pipeline.set_progress_bar_config(disable=True)
-
-                                # run inference
-                                generator = torch.Generator(device=accelerator.device)
-                                if args.seed is not None:
-                                    generator = generator.manual_seed(args.seed)
-                                images = []
-                                for _ in range(args.num_validation_images):
-                                    images.append(
-                                        pipeline(prompt, num_inference_steps=50, generator=generator).images[0]
-                                    )
-
-                                # save images
-                                for i, image in enumerate(images):
-                                    image.save(os.path.join(save_path, f"{prompt}_{i}.png"))
-
-                                del pipeline
-                                torch.cuda.empty_cache()
-                
-                            logs = {"step_loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
-                            progress_bar.set_postfix(**logs)
+                total_step = save_and_validate(
+                    accelerator,
+                    progress_bar,
+                    total_step,
+                    train_loss,
+                    checkpointing_steps,
+                    args.checkpoints_total_limit,
+                    args.output_dir,
+                    unet,
+                    args.validation_prompt,
+                    args.num_validation_images,
+                    args.pretrained_model_name_or_path,
+                    weight_dtype,
+                    args.seed,
+                    loss,
+                    lr_scheduler
+                )
 
             if total_step >= args.max_train_steps:
                 accelerator.end_training()
@@ -322,7 +271,7 @@ if __name__ == "__main__":
     parser.add_argument('--snr_gamma', type=int, default=None, help = "tuning config path")
     parser.add_argument('--max_grad_norm', type=float, default=1.0, help = "")
     parser.add_argument('--checkpointing_steps', type=int, default=1, help="")
-    parser.add_argument('--checkpoints_total_limit', type=str, default=None, help="")
+    parser.add_argument('--checkpoints_total_limit', type=str, default=1, help="")
     parser.add_argument('--validation_prompt', type=str, default=["A pokemon with blue eyes"], help = "tuning config path")
     parser.add_argument('--weight_dtype', type=str, default=torch.float32, help="")
     parser.add_argument('--num_validation_images', type=int, default=1, help="")
