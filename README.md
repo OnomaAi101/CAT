@@ -9,7 +9,7 @@ accelerate launch vanila_lora_train.py
 for inference 
 
 ```bash
-python lora_test.py
+python vanila_lora_test.py
 ```
 
 # specific training and checkpoint saving
