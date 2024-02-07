@@ -7,7 +7,7 @@ after adjusting the arguments in vanila_lora_train.py, run
 accelerate launch vanila_lora_train.py
 ```
 
-for inference, adjust arguments of the following program
+for inference, adjust arguments of the following program and run
 
 ```bash
 python vanila_lora_test.py
@@ -39,13 +39,13 @@ CUDA_VISIBLE_DEVICES=2
 
 ## Dreambooth Training 
 
-just like lora set saved dir and config file 
+just like lora, set saved dir and config file 
 then run in python env where requirements are installed, for example
 
 ```bash
 export CUDA_VISIBLE_DECIVES=2 && python dreambooth_train.py --tuning_config_path /data7/OnomaAi101/CAT/configs/dreambooth_tuning_config.json
 ```
-for inference, adjust arguments of the following program
+for inference, adjust arguments of the following program and run
 
 ```bash 
 python dreambooth_test.py
