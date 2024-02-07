@@ -1,18 +1,19 @@
-## CAT pipeline 
+# CAT pipeline 
 
-after adjusting the arguments in lora_train.py, run 
+## Lora Training
+after adjusting the arguments in vanila_lora_train.py, run 
 
 ```bash
 accelerate launch vanila_lora_train.py
 ```
 
-for inference 
+for inference, adjust arguments of the following program
 
 ```bash
-python lora_test.py
+python vanila_lora_test.py
 ```
 
-# specific training and checkpoint saving
+### specific training and checkpoint saving
 
 first set a directory to save your config, validation img and lora weight
 
