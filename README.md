@@ -47,6 +47,6 @@ export CUDA_VISIBLE_DECIVES=2 && python dreambooth.py --tuning_config_path /data
 ```
 for inference, adjust arguments of the following program
 
-'''bash 
+```bash 
 python dreambooth_test.py
 ```
