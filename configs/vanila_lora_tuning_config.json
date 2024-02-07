@@ -4,7 +4,7 @@
     "report_to": null,
     "accelerator_project_config": null,
     "seed": 42,
-    "output_dir": "./results",
+    "output_dir": "./results/vanila_lora",
     "pretrained_model_name_or_path": "runwayml/stable-diffusion-v1-5",
     "revision": null,
     "variant": null,
