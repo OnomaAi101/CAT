@@ -45,3 +45,7 @@ then run in python env where requirements are installed, for example
 ```bash
 export CUDA_VISIBLE_DECIVES=2 && python dreambooth.py --tuning_config_path /data7/OnomaAi101/CAT/configs/dreambooth_tuning_config.json
 ```
+for inference, adjust arguments of the following program
+'''bash 
+python dreambooth_test.py
+```
