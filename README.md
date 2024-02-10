@@ -7,12 +7,6 @@ after adjusting the arguments in vanila_lora_train.py, run
 accelerate launch vanila_lora_train.py
 ```
 
-for inference, adjust arguments of the following program and run
-
-```bash
-python vanila_lora_test.py
-```
-
 ### specific training and checkpoint saving
 
 first set a directory to save your config, validation img and lora weight
@@ -31,10 +25,7 @@ mkdir ./results/vanila_lora/pokemon_vanila_02012024
 touch ./results/vanila_lora/pokemon_vanila_02012024/tuning_config.json
 #then run train 
 accelerate launch vanila_lora_train.py --tuning_config_path ./results/vanila_lora/pokemon_vanila_02012024/tuning_config.json
-#also add 
-CUDA_VISIBLE_DEVICES=2 
-#in front of the command above to control cuda devices
-#then change the folder dir of load_lora_weights to checkpoint-number folder in vanila_lora_test to continue inference
+#change accelerate config to specify the devices to train
 ```
 
 ## Dreambooth Training 
@@ -47,6 +38,10 @@ export CUDA_VISIBLE_DECIVES=2 && python dreambooth_train.py --tuning_config_path
 ```
 for inference, adjust arguments of the following program and run
 
-```bash 
-python dreambooth_test.py
-```
+## CAT Traing 
+
+the same as lora but use cat_tuning_config.json and set trigger word and cat factor
+
+## Inference 
+
+use test notebook by setting the environment and please set them neatly

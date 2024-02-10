@@ -189,8 +189,9 @@ def main(args):
                 # Predict the noise residual and compute loss
                 model_pred = lora_unet(noisy_latents, timesteps, encoder_hidden_states).sample
                 #cat application
-                base_pred = unet(noisy_latents, timesteps, encoder_hidden_states_no_trigger).sample
                 model_pred_no_trigger = lora_unet(noisy_latents, timesteps, encoder_hidden_states_no_trigger).sample
+                base_pred = unet(noisy_latents, timesteps, encoder_hidden_states_no_trigger).sample
+                
 
                 #apply snr_gamma_loss
                 model_loss = snr_loss(args.snr_gamma, model_pred, target, noise_scheduler, timesteps)
