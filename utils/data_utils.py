@@ -5,11 +5,7 @@ import numpy as np
 from datasets import load_dataset
 from torchvision import transforms
 
-DATASET_NAME_MAPPING = {
-    "lambdalabs/pokemon-blip-captions": ("image", "text"),
-}
-
-def import_from_hub(dataset_name, dataset_config_name, train_data_dir, cache_dir, image_column, caption_column):
+def import_data(dataset_name, dataset_config_name, train_data_dir, cache_dir, image_column, caption_column):
     if dataset_name is not None:
             # Downloading and loading a dataset from the hub.
             dataset = load_dataset(
@@ -29,8 +25,6 @@ def import_from_hub(dataset_name, dataset_config_name, train_data_dir, cache_dir
 
     column_names = dataset["train"].column_names
 
-    dataset_columns = DATASET_NAME_MAPPING.get(dataset_name, None)
-
     if image_column is None:
         image_column = dataset_columns[0] if dataset_columns is not None else column_names[0]
     else:
@@ -47,9 +41,10 @@ def import_from_hub(dataset_name, dataset_config_name, train_data_dir, cache_dir
             raise ValueError(
                 f"--caption_column' value '{caption_column}' needs to be one of: {', '.join(column_names)}"
     )
+            
     return dataset, image_column, caption_column
 
-class hub_preprocessor:
+class data_preprocessor:
     def __init__(self, 
                 resolution,
                 center_crop,
@@ -76,11 +71,9 @@ class hub_preprocessor:
                         transforms.Normalize([0.5], [0.5]),
                     ]
                 )
-            
-    #tag tokenizing
-    def tokenize_captions(self, examples):
-            captions = []
-            for caption in examples[self.caption_column]:
+    def get_caption_column(self, examples):
+        captions = []
+        for caption in examples[self.caption_column]:
                 if isinstance(caption, str):
                     captions.append(caption)
                 elif isinstance(caption, (list, np.ndarray)):
@@ -90,23 +83,29 @@ class hub_preprocessor:
                     raise ValueError(
                         f"Caption column `{self.caption_column}` should contain either strings or lists of strings."
                     )
-            inputs = self.tokenizer(
-                captions, max_length=self.tokenizer.model_max_length, padding="max_length", truncation=True, return_tensors="pt"
-            )
-            return inputs.input_ids
+        return captions
+    
+    #tag tokenizing
+    def tokenize_captions(self, examples):
+        captions = self.get_caption_column(examples)
+        inputs = self.tokenizer(
+            captions, max_length=self.tokenizer.model_max_length, padding="max_length", truncation=True, return_tensors="pt"
+        )
+        return inputs.input_ids
 
     def preprocess_train(self, examples):
-            # Preprocessing the datasets.
-            images = [image.convert("RGB") for image in examples[self.image_column]]
-            examples["pixel_values"] = [self.train_transforms(image) for image in images]
-            examples["input_ids"] = self.tokenize_captions(examples)
-            return examples
+        # Preprocessing the datasets.
+        images = [image.convert("RGB") for image in examples[self.image_column]]
+        examples["pixel_values"] = [self.train_transforms(image) for image in images]
+        examples["input_ids"] = self.tokenize_captions(examples)
+        return examples
 
     def collate_fn(self, examples):
-            pixel_values = torch.stack([example["pixel_values"] for example in examples])
-            pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
-            input_ids = torch.stack([example["input_ids"] for example in examples])
-            return {"pixel_values": pixel_values, "input_ids": input_ids}
+        pixel_values = torch.stack([example["pixel_values"] for example in examples])
+        pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
+        input_ids = torch.stack([example["input_ids"] for example in examples])
+        batch = {"pixel_values": pixel_values, "input_ids": input_ids}
+        return batch
 
     def get_data(self,
                 accelerator,
@@ -133,3 +132,44 @@ class hub_preprocessor:
             num_workers=dataloader_num_workers
         )
         return train_dataset, train_dataloader
+    
+class cat_data_preprocessor(data_preprocessor):
+    def __init__(self, 
+                resolution,
+                center_crop,
+                random_flip,
+                caption_column, 
+                tokenizer, 
+                is_train, 
+                image_column,
+                trigger_word
+                ):
+        self.trigger_word = trigger_word
+        super().__init__(
+            resolution,
+            center_crop,
+            random_flip,
+            caption_column, 
+            tokenizer, 
+            is_train, 
+            image_column,
+        )
+    
+    def cat_tokenize_captions(self, examples):
+        captions = super().get_caption_column(examples)
+        for idx, text in enumerate(captions):
+            captions[idx] = text.replace(f"{self.trigger_word}, ", "")
+        inputs = self.tokenizer(
+            captions, max_length=self.tokenizer.model_max_length, padding="max_length", truncation=True, return_tensors="pt"
+        )
+        return inputs.input_ids   
+    
+    def preprocess_train(self, examples):
+        examples = super().preprocess_train(examples)
+        examples["input_ids_no_trigger"] = self.cat_tokenize_captions(examples)
+        return examples
+    
+    def collate_fn(self, examples):
+        batch = super().collate_fn(examples)
+        batch["input_ids_no_trigger"] = torch.stack([example["input_ids_no_trigger"] for example in examples])
+        return batch

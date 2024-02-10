@@ -7,8 +7,8 @@ import math
 from tqdm import tqdm
 import argparse
 import json
-from utils.train_utils import import_model, get_optimizer
-from utils.data_utils import import_data, data_preprocessor
+from utils.train_utils import cat_import_model, get_optimizer
+from utils.data_utils import import_data, cat_data_preprocessor
 from utils.train_loops import setting_steps, get_prediction_type, snr_loss, save_and_validate
 
 
@@ -31,7 +31,7 @@ def main(args):
         weight_dtype = torch.float32
 
     #getting diffuser model
-    noise_scheduler, tokenizer, text_encoder, vae, unet, layers_to_train = import_model(args.pretrained_model_name_or_path,  
+    noise_scheduler, tokenizer, text_encoder, vae, unet, lora_unet, layers_to_train = cat_import_model(args.pretrained_model_name_or_path,  
                                                                                         args.revision, 
                                                                                         args.variant, 
                                                                                         args.non_ema_revision,
@@ -64,14 +64,15 @@ def main(args):
     )
 
     #preprocessing dataset and creating dataloader
-    preprocessor = data_preprocessor(
+    preprocessor = cat_data_preprocessor(
             args.resolution,
             args.center_crop,
             args.random_flip,
             caption_column,
             tokenizer,
             True,
-            image_column
+            image_column,
+            args.trigger_word
     )
 
     train_dataset, train_dataloader = preprocessor.get_data(
@@ -100,8 +101,8 @@ def main(args):
         overrode_max_train_steps = True
     
     # Prepare everything with our `accelerator`.
-    layers_to_train, optimizer, train_dataloader, lr_scheduler, args.validation_prompt = accelerator.prepare(
-        layers_to_train, optimizer, train_dataloader, lr_scheduler, args.validation_prompt
+    layers_to_train, optimizer, train_dataloader, lr_scheduler, args.validation_prompt, unet = accelerator.prepare(
+        layers_to_train, optimizer, train_dataloader, lr_scheduler, args.validation_prompt, unet
     )
 
     #creating model repository
@@ -153,10 +154,10 @@ def main(args):
     )
 
     for epoch in range(first_epoch, num_train_epochs):
-        unet.train()
+        lora_unet.train()
         train_loss = 0.0
         for step, batch in enumerate(train_dataloader):
-            with accelerator.accumulate(unet):
+            with accelerator.accumulate(lora_unet):
                 # Convert images to latent space
                 latents = vae.encode(batch["pixel_values"].to(weight_dtype)).latent_dist.sample()
                 latents = latents * vae.config.scaling_factor
@@ -179,16 +180,23 @@ def main(args):
 
                 # Get the text embedding for conditioning
                 encoder_hidden_states = text_encoder(batch["input_ids"])[0]
+                encoder_hidden_states_no_trigger = text_encoder(batch["input_ids_no_trigger"])[0]
 
                 # Get the target for loss depending on the prediction type
                 #initiate prediction_type = "epsilon" for epsilon prediction and "v_prediction" for velocity prediction
                 target = get_prediction_type(args.prediction_type, noise_scheduler, noise, latents, timesteps)
 
                 # Predict the noise residual and compute loss
-                model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
+                model_pred = lora_unet(noisy_latents, timesteps, encoder_hidden_states).sample
+                #cat application
+                base_pred = unet(noisy_latents, timesteps, encoder_hidden_states_no_trigger).sample
+                model_pred_no_trigger = lora_unet(noisy_latents, timesteps, encoder_hidden_states_no_trigger).sample
 
                 #apply snr_gamma_loss
-                loss = snr_loss(args.snr_gamma, model_pred, target, noise_scheduler, timesteps)
+                model_loss = snr_loss(args.snr_gamma, model_pred, target, noise_scheduler, timesteps)
+                cat_loss = snr_loss(args.snr_gamma, model_pred_no_trigger, base_pred, noise_scheduler, timesteps)
+                #cat application
+                loss = model_loss + args.cat_factor * cat_loss
 
                 # Gather the losses across all processes for logging (if we use distributed training).
                 avg_loss = accelerator.gather(loss.repeat(args.train_batch_size)).mean()
@@ -211,7 +219,7 @@ def main(args):
                     checkpointing_steps,
                     args.checkpoints_total_limit,
                     args.output_dir,
-                    unet,
+                    lora_unet,
                     args.validation_prompt,
                     args.num_validation_images,
                     args.pretrained_model_name_or_path,
@@ -266,9 +274,11 @@ if __name__ == "__main__":
     parser.add_argument('--noise_offset', type=str, default=None, help = "")
     parser.add_argument('--prediction_type', type=str, default=None, help="")
     parser.add_argument('--snr_gamma', type=int, default=None, help = "tuning config path")
+    parser.add_argument('--cat_factor', type=int, default=1, help = "")
     parser.add_argument('--max_grad_norm', type=float, default=1.0, help = "")
     parser.add_argument('--checkpointing_steps', type=int, default=1, help="")
     parser.add_argument('--checkpoints_total_limit', type=str, default=1, help="")
+    parser.add_argument('--trigger_word', type=str, default="pokemon", help = "tuning config path")
     parser.add_argument('--validation_prompt', type=str, default=["A pokemon with blue eyes"], help = "tuning config path")
     parser.add_argument('--weight_dtype', type=str, default=torch.float32, help="")
     parser.add_argument('--num_validation_images', type=int, default=1, help="")

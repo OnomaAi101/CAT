@@ -102,3 +102,30 @@ def get_scheduler(accelerator, train_dataloader, gradient_accumulation_steps, nu
     )
 
     return lr_scheduler
+
+def cat_import_model(
+            pretrained_model_name_or_path,
+            revision, 
+            variant, 
+            non_ema_revision, 
+            accelerator,
+            weight_dtype,
+            lora_rank,
+        ):
+    noise_scheduler, tokenizer, text_encoder, vae, lora_unet, layers_to_train = import_model(
+        pretrained_model_name_or_path,
+        revision, 
+        variant, 
+        non_ema_revision, 
+        accelerator,
+        weight_dtype,
+        lora_rank,
+    )
+    
+    unet = UNet2DConditionModel.from_pretrained(
+            pretrained_model_name_or_path, subfolder="unet", revision=non_ema_revision
+    )
+    
+    unet.requires_grad_(False)
+    
+    return noise_scheduler, tokenizer, text_encoder, vae, unet, lora_unet, layers_to_train
