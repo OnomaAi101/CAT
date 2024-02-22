@@ -161,3 +161,4 @@ cython_debug/
 
 #trained models
 results/
+data/

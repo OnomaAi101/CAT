@@ -14,7 +14,9 @@ if __name__ == "__main__":
     parser.add_argument("--max_bucket_reso", default=2048, type=int, help="Maximum bucket resolution.")
     parser.add_argument("--pretrained_model_name_or_path", default="runwayml/stable-diffusion-v1-5", type=str, help="The pretrained model name or path.")
     parser.add_argument("--train_data_dir", default="/data7/OnomaAi101/CAT/data/textual_inversion/cat_statue", type=str, help="The training data directory.")
-    parser.add_argument("--repeat", default=1, type=int, help="The repeat.")
+    parser.add_argument("--reg_data_dir", default="/data7/OnomaAi101/CAT/data/textual_inversion/cat_statue", type=str, help="The regularizing data directory.")
+    parser.add_argument("--train_repeat", default=1, type=int, help="The train repeat.")
+    parser.add_argument("--reg_repeat", default=1, type=int, help="The regulation repeat.")
     parser.add_argument("--resolution", default="512,512", type=str, help="The resolution.")
     parser.add_argument("--output_dir", default="/data7/OnomaAi101/CAT/results/dreembooth/cat_statue_20240205", type=str, help="The output directory.")
     parser.add_argument("--logging_dir", default="/data7/OnomaAi101/CAT/results/dreembooth/cat_statue_20240205", type=str, help="The logging directory.")
@@ -180,14 +182,19 @@ if __name__ == "__main__":
         bucket_no_upscale = ""
     data_class = args.train_data_dir.split("/")[-1]
     os.mkdir("data_temp")
-    os.system(f"ln -s {args.train_data_dir} ./data_temp/" + f"{args.repeat}_{data_class}")
-    args.train_data_dir = "./data_temp"
+    os.mkdir("data_temp/train")
+    os.mkdir("data_temp/reg")
+    os.system(f"ln -s {args.train_data_dir} ./data_temp/train" + f"{args.train_repeat}_{data_class}")
+    os.system(f"ln -s {args.reg_data_dir} ./data_temp/reg" + f"{args.reg_repeat}_{data_class}")
+    args.train_data_dir = "./data_temp/train"
+    args.reg_data_dir = "./data_temp/reg"
     command = (f"""
             {args.kohya_path}/venv/bin/accelerate launch \
             --num_processes={args.num_processes} \
             "{args.kohya_path}/train_db.py" \
             """ + bucket + f""" --pretrained_model_name_or_path={args.pretrained_model_name_or_path} \
             --train_data_dir={args.train_data_dir}  \
+            --reg_data_dir={args.reg_data_dir} \
             --resolution={args.resolution} \
             --output_dir={args.output_dir} \
             --logging_dir={args.logging_dir} \
