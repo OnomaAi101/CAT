@@ -184,8 +184,8 @@ if __name__ == "__main__":
     os.mkdir("data_temp")
     os.mkdir("data_temp/train")
     os.mkdir("data_temp/reg")
-    os.system(f"ln -s {args.train_data_dir} ./data_temp/train" + f"{args.train_repeat}_{data_class}")
-    os.system(f"ln -s {args.reg_data_dir} ./data_temp/reg" + f"{args.reg_repeat}_{data_class}")
+    os.system(f"ln -s {args.train_data_dir} ./data_temp/train/" + f"{args.train_repeat}_{data_class}")
+    os.system(f"ln -s {args.reg_data_dir} ./data_temp/reg/" + f"{args.reg_repeat}_{data_class}")
     args.train_data_dir = "./data_temp/train"
     args.reg_data_dir = "./data_temp/reg"
     command = (f"""
