@@ -7,13 +7,13 @@ from torchvision import transforms
 
 def import_data(dataset_name, dataset_config_name, train_data_dir, cache_dir, image_column, caption_column):
     if dataset_name is not None:
-            # Downloading and loading a dataset from the hub.
-            dataset = load_dataset(
-                dataset_name,
-                dataset_config_name,
-                cache_dir=cache_dir,
-                data_dir=train_data_dir,
-    )
+        # Downloading and loading a dataset from the hub.
+        dataset = load_dataset(
+            dataset_name,
+            dataset_config_name,
+            cache_dir=cache_dir,
+            data_dir=train_data_dir,
+        )
     else:
             data_files = {}
             if train_data_dir is not None:

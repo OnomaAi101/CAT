@@ -24,8 +24,6 @@ def image_similarity(image1, image2):
     similarity = cos(image1_features[0], image2_features[0]).item()
     similarity = (similarity + 1) / 2
 
-    print("Image similarity", similarity)
-
     return similarity
 
 def prompt_similarity(prompt, image_path):
@@ -46,7 +44,5 @@ def prompt_similarity(prompt, image_path):
 
     # Calculate similarity
     similarity = cos(prompt_features[0], image_features[0]).item()
-
-    print("Prompt similarity:", similarity)
 
     return similarity
