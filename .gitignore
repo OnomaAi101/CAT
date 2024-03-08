@@ -1,0 +1,13 @@
+/result
+/test
+/result
+/test
+/src
+
+__pycache__
+.env
+build_vectorstore.py
+
+src
+chroma_db
+/models
