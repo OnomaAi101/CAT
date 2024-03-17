@@ -12,7 +12,11 @@ def import_model(pretrained_model_name_or_path,
                 accelerator,
                 weight_dtype,
                 lora_rank,
+                train=True # sanity check
                 ):
+    """
+    Attach the pretrained model to the accelerator and cast to weight_dtype, attaches lora attn processors if lora_rank is not None
+    """
     #load scheduler 
     noise_scheduler = DDPMScheduler.from_pretrained(pretrained_model_name_or_path, subfolder="scheduler")
     tokenizer = CLIPTokenizer.from_pretrained(pretrained_model_name_or_path, subfolder="tokenizer", revision=revision)
@@ -35,13 +39,18 @@ def import_model(pretrained_model_name_or_path,
     vae.requires_grad_(False)
     text_encoder.requires_grad_(False)
     unet.requires_grad_(False)
-
+    if train:
+        assert lora_rank is not None, "lora_rank must be provided if train is True. You are probably trying to train the model without lora_rank. Please provide a valid lora_rank."
     if lora_rank is not None:
+        # attach lora attn processors
         unet, layers_to_train = get_lora(unet, lora_rank)
 
     return noise_scheduler, tokenizer, text_encoder, vae, unet, layers_to_train
 
 def get_lora(unet, rank):
+    """
+    Attach LoRA attn processors to the unet model
+    """
     #load lora attn processors
     #this will be changed regrading the type of adapters
     lora_attn_procs = {}
@@ -61,7 +70,7 @@ def get_lora(unet, rank):
             cross_attention_dim=cross_attention_dim,
             rank=rank
     )
-    
+    assert len(lora_attn_procs) > 0, "No attn processors found in the model. Please provide a valid model with attn processors."
     unet.set_attn_processor(lora_attn_procs)
 
     layers_to_train = AttnProcsLayers(unet.attn_processors)
@@ -121,10 +130,15 @@ def cat_import_model(
         weight_dtype,
         lora_rank,
     )
-    
+    """
+    Attach the pretrained model to the accelerator and cast to weight_dtype
+    NOTE: This makes 2 calls to load the unet model. This is vram inefficient but for simpler code, we just load the unet again.
+    This is a temporary solution and will be changed in the future. (maybe scale argument?)
+    """
+    # TODO: Use scale argument instead of loading the model again
     unet = UNet2DConditionModel.from_pretrained(
             pretrained_model_name_or_path, subfolder="unet", revision=non_ema_revision
-    )
+    ) # loads vanilla unet. This is vram inefficient but for simpler code, we just load the unet again.
     
     unet.requires_grad_(False)
     

@@ -62,6 +62,10 @@ def snr_loss(snr_gamma,
     target,
     noise_scheduler,
     timesteps):
+    """
+    Compute the loss with SNR weighting as per Section 3.4 of https://arxiv.org/abs/2303.09556.
+    If snr_gamma is None, the loss is computed without SNR weighting. (vanilla mse loss)
+    """
     if snr_gamma is None:
         loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
     else:

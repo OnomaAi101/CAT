@@ -189,17 +189,15 @@ def main(args):
 
                 # Predict the noise residual and compute loss
                 model_pred = lora_unet(noisy_latents, timesteps, encoder_hidden_states).sample
-                #cat application
+                ###### CAT Loss Implementation ######
                 model_pred_no_trigger = lora_unet(noisy_latents, timesteps, encoder_hidden_states_no_trigger).sample
                 base_pred = unet(noisy_latents, timesteps, encoder_hidden_states_no_trigger).sample
                 
-
                 #apply snr_gamma_loss
                 model_loss = snr_loss(args.snr_gamma, model_pred, target, noise_scheduler, timesteps)
                 cat_loss = snr_loss(args.snr_gamma, model_pred_no_trigger, base_pred, noise_scheduler, timesteps)
-                #cat application
                 loss = model_loss + args.cat_factor * cat_loss
-
+                ###### End of CAT Loss Implementation ######
                 # Gather the losses across all processes for logging (if we use distributed training).
                 avg_loss = accelerator.gather(loss.repeat(args.train_batch_size)).mean()
                 train_loss += avg_loss.item() / args.gradient_accumulation_steps
