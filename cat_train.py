@@ -196,10 +196,13 @@ def main(args):
                 #apply snr_gamma_loss
                 model_loss = snr_loss(args.snr_gamma, model_pred, target, noise_scheduler, timesteps)
                 cat_loss = snr_loss(args.snr_gamma, model_pred_no_trigger, base_pred, noise_scheduler, timesteps)
+                accelerator.log("loss/train", model_loss.item())
+                accelerator.log("loss/cat", cat_loss.item())
                 loss = model_loss + args.cat_factor * cat_loss
                 ###### End of CAT Loss Implementation ######
                 # Gather the losses across all processes for logging (if we use distributed training).
                 avg_loss = accelerator.gather(loss.repeat(args.train_batch_size)).mean()
+                accelerator.log("loss/avg", avg_loss.item())
                 train_loss += avg_loss.item() / args.gradient_accumulation_steps
 
                 # Backpropagate
