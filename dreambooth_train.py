@@ -1,3 +1,9 @@
+"""
+Uses external library to train a model.
+Here, we use kohya_ss to train a model.
+Adjust paths for your environment.
+"""
+
 import os 
 import json
 import importlib

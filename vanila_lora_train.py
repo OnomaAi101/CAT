@@ -8,7 +8,7 @@ from tqdm import tqdm
 import argparse
 import json
 from utils.train_utils import import_model, get_optimizer
-from utils.data_utils import import_data, data_preprocessor
+from utils.data_utils import import_data, DataPreprocessor
 from utils.train_loops import setting_steps, get_prediction_type, snr_loss, save_and_validate
 
 
@@ -64,7 +64,7 @@ def main(args):
     )
 
     #preprocessing dataset and creating dataloader
-    preprocessor = data_preprocessor(
+    preprocessor = DataPreprocessor(
             args.resolution,
             args.center_crop,
             args.random_flip,

@@ -8,7 +8,7 @@ from tqdm import tqdm
 import argparse
 import json
 from utils.train_utils import cat_import_model, get_optimizer
-from utils.data_utils import import_data, cat_data_preprocessor
+from utils.data_utils import import_data, CatDataPreprocessor
 from utils.train_loops import setting_steps, get_prediction_type, snr_loss, save_and_validate
 
 
@@ -64,7 +64,7 @@ def main(args):
     )
 
     #preprocessing dataset and creating dataloader
-    preprocessor = cat_data_preprocessor(
+    preprocessor = CatDataPreprocessor(
             args.resolution,
             args.center_crop,
             args.random_flip,
