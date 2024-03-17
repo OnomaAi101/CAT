@@ -211,3 +211,50 @@ class CatDataPreprocessor(DataPreprocessor):
         batch = super().collate_fn(examples)
         batch["input_ids_no_trigger"] = torch.stack([example["input_ids_no_trigger"] for example in examples])
         return batch
+
+   
+class FirstReplaceCatPreprocessor(DataPreprocessor):
+    def __init__(self, 
+                resolution,
+                center_crop,
+                random_flip,
+                caption_column, 
+                tokenizer, 
+                is_train, 
+                image_column,
+                ):
+        """
+        This is the class that replaces the first word in the caption with the trigger word.
+        """
+        print("WARN: This class replaces the first word in the caption with the trigger word. This may result regular captions to be meaningless. Use with caution.")
+        super().__init__(
+            resolution,
+            center_crop,
+            random_flip,
+            caption_column, 
+            tokenizer, 
+            is_train, 
+            image_column,
+        )
+        
+    
+    def cat_tokenize_captions(self, examples):
+        captions = super().get_caption_column(examples)
+        for idx, text in enumerate(captions):
+            if "," not in text:
+                raise ValueError("The caption should contain a comma.")
+            captions[idx] = ', '.join(text.split(',')[1:]) # WARN : This assumes that the first word is the trigger word. There can be case that does not follow this pattern.
+        inputs = self.tokenizer(
+            captions, max_length=self.tokenizer.model_max_length, padding="max_length", truncation=True, return_tensors="pt"
+        )
+        return inputs.input_ids
+    
+    def preprocess_train(self, examples):
+        examples = super().preprocess_train(examples)
+        examples["input_ids_no_trigger"] = self.cat_tokenize_captions(examples)
+        return examples
+    
+    def collate_fn(self, examples):
+        batch = super().collate_fn(examples)
+        batch["input_ids_no_trigger"] = torch.stack([example["input_ids_no_trigger"] for example in examples])
+        return batch
