@@ -202,11 +202,11 @@ def main(args):
                 ###### End of CAT Loss Implementation ######
                 # Gather the losses across all processes for logging (if we use distributed training).
                 avg_loss = accelerator.gather(loss.repeat(args.train_batch_size)).mean()
-                accelerator.log("loss/avg", avg_loss.item())
                 train_loss += avg_loss.item() / args.gradient_accumulation_steps
-
+                accelerator.log("loss/avg", train_loss.item())
+                train_loss.requires_grad = True
                 # Backpropagate
-                accelerator.backward(loss)
+                accelerator.backward(train_loss)
                 if accelerator.sync_gradients:
                     accelerator.clip_grad_norm_(unet.parameters(), args.max_grad_norm)
                 optimizer.step()
