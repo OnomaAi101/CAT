@@ -40,6 +40,8 @@ def create_new_json_file(json_file, dataset_json, project_name:str, outputs_dir:
     for i, prompt in enumerate(validation_prompts):
         for token in tokens:
             combined_prompts.append(f"{token}, {prompt}")
+            # without token
+            combined_prompts.append(prompt)
     print(f"Combined prompts: {len(combined_prompts)}, {len(tokens)} x {len(validation_prompts)}")
     json_data.update({"validation_prompt" : combined_prompts})
     # write to new json file
