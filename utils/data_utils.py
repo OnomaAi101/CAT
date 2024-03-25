@@ -1,13 +1,16 @@
+import json
 import os
 from typing import Tuple 
 import torch
 import random
 import numpy as np
+from PIL import Image
 from datasets import load_dataset
 from torchvision import transforms
 from torch.utils.data import Dataset, DataLoader
 
-def import_data(dataset_name, dataset_config_name, train_data_dir, cache_dir, image_column, caption_column):
+captions_logged = set()
+def import_data(dataset_name, dataset_config_name, train_data_dir, cache_dir, image_column, caption_column, from_jsonl:str=None):
     """
     TODO: Refactor to handle various types of dataset.
     For evaluation, planned datasets are:
@@ -21,6 +24,22 @@ def import_data(dataset_name, dataset_config_name, train_data_dir, cache_dir, im
             dataset_config_name,
             cache_dir=cache_dir,
             data_dir=train_data_dir,
+        )
+    elif from_jsonl:
+        if not os.path.exists(from_jsonl):
+            raise FileNotFoundError(f"File not found: {from_jsonl}")
+        print(f"Loading dataset from jsonl: {from_jsonl}")
+        # try json load for each line
+        with open(from_jsonl, "r", encoding="utf-8") as file:
+            for line in file:
+                try:
+                    json.loads(line)
+                except json.JSONDecodeError as e:
+                    print(f"Error: {e}")
+                    print(f"Line: {line}")
+        dataset = load_dataset(
+            "json",
+            data_files=(from_jsonl)
         )
     else:
             data_files = {}
@@ -122,6 +141,9 @@ class DataPreprocessor:
 
     def preprocess_train(self, examples):
         # Preprocessing the datasets.
+        # check if image is paths
+        if isinstance(examples[self.image_column][0], str):
+            examples[self.image_column] = [Image.open(image) for image in examples[self.image_column]]
         images = [image.convert("RGB") for image in examples[self.image_column]]
         examples["pixel_values"] = [self.train_transforms(image) for image in images]
         examples["input_ids"] = self.tokenize_captions(examples)
@@ -189,7 +211,11 @@ class CatDataPreprocessor(DataPreprocessor):
         TODO: support for multiple trigger words. 
         """
         captions = super().get_caption_column(examples)
+        print(captions)
         for idx, text in enumerate(captions):
+            if text not in captions_logged:
+                print(f"Caption: {text}")
+                captions_logged.add(text)
             captions[idx] = text.replace(f"{self.trigger_word}, ", "")
         inputs = self.tokenizer(
             captions, max_length=self.tokenizer.model_max_length, padding="max_length", truncation=True, return_tensors="pt"
@@ -239,7 +265,7 @@ class FirstReplaceCatPreprocessor(DataPreprocessor):
         
     
     def cat_tokenize_captions(self, examples):
-        captions = super().get_caption_column(examples)
+        captions = self.get_caption_column(examples)
         for idx, text in enumerate(captions):
             if "," not in text:
                 raise ValueError("The caption should contain a comma.")

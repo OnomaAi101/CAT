@@ -62,7 +62,8 @@ def main(args):
             args.train_data_dir,
             args.cache_dir,
             args.image_column,
-            args.caption_column
+            args.caption_column,
+            args.from_jsonl
     )
 
     #preprocessing dataset and creating dataloader
@@ -189,14 +190,12 @@ def main(args):
                 # Predict the noise residual and compute loss
                 model_pred = lora_unet(noisy_latents, timesteps, encoder_hidden_states).sample
                 #cat application
-                with torch.no_grad():
-                    model_pred_no_trigger = lora_unet(noisy_latents, timesteps, encoder_hidden_states_no_trigger).sample # this can work with no_grad to save memory
-                    base_pred = unet(noisy_latents, timesteps, encoder_hidden_states_no_trigger).sample # this can work with no_grad to save memory
+                model_pred_no_trigger = lora_unet(noisy_latents, timesteps, encoder_hidden_states_no_trigger).sample # this can work with no_grad to save memory
+                base_pred = unet(noisy_latents, timesteps, encoder_hidden_states_no_trigger).sample # this can work with no_grad to save memory
 
                 #apply snr_gamma_loss
                 model_loss = snr_loss(args.snr_gamma, model_pred, target, noise_scheduler, timesteps)
                 cat_loss = snr_loss(args.snr_gamma, model_pred_no_trigger, base_pred, noise_scheduler, timesteps)
-                cat_loss.requires_grad = True # for cat application
                 #cat application
                 loss = model_loss + args.cat_factor * cat_loss
                 ###### End of CAT Loss Implementation ######
@@ -205,7 +204,7 @@ def main(args):
                 train_loss += avg_loss.item() / args.gradient_accumulation_steps
                 accelerator.log("loss/avg", train_loss)
                 # Backpropagate
-                accelerator.backward(avg_loss)
+                accelerator.backward(loss)
                 if accelerator.sync_gradients:
                     accelerator.clip_grad_norm_(unet.parameters(), args.max_grad_norm)
                 optimizer.step()
@@ -280,10 +279,12 @@ if __name__ == "__main__":
     parser.add_argument('--max_grad_norm', type=float, default=1.0, help = "gradient clipping, for stable training, it is set to 1.0 at default. If you want to disable it, set it to 0.")
     parser.add_argument('--checkpointing_steps', type=int, default=1, help="")
     parser.add_argument('--checkpoints_total_limit', type=str, default=1, help="")
-    parser.add_argument('--trigger_word', type=str, default="pokemon", help = "the token that is used to trigger the model")
+    parser.add_argument('--trigger_word', type=str, default="pokemon", help = "the token that is used to trigger the model, this does not do anything in all (first replace) setup")
     parser.add_argument('--validation_prompt', type=str, help = "Validation prompt to use for validation images. If None, no validation images will be generated. If a list of prompts is provided, one image will be generated for each prompt. Separate each prompt with |", default=None)
     parser.add_argument('--weight_dtype', type=str, default=torch.float32, help="Dtype to use for weights")
     parser.add_argument('--num_validation_images', type=int, default=1, help="Number of images to generate for validation")
+    # from_jsonl
+    parser.add_argument('--from_jsonl', type=str, default=None, help="Specify the path to metadata.jsonl file to load the dataset from.")
     args = parser.parse_args()
     if args.tuning_config_path is not None:
         if not os.path.exists(args.tuning_config_path):
@@ -294,5 +295,5 @@ if __name__ == "__main__":
             t_args.__dict__.update(json.load(f))
             args = parser.parse_args(namespace=t_args)
     assert args.prediction_type in ["epsilon", "v_prediction"], "Prediction type must be either 'epsilon' or 'v_prediction'"
-    assert args.train_data_dir or args.dataset_name, "Either train_data_dir or dataset_name must be provided."
+    assert args.train_data_dir or args.dataset_name or args.dataset_config_name or args.from_jsonl, "One of train_data_dir or dataset_name or dataset_config_name or from_jsonl must be provided."
     main(args)

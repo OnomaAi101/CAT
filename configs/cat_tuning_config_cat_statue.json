@@ -44,5 +44,5 @@
     "trigger_word": "shs",
     "validation_prompt": ["shs, a cat statue standing at a grass field", "a cat statue standing at a grass field"],
     "weight_dtype": "torch.float32",
-    "num_validation_images": 1
+    "num_validation_images": 4
 }
