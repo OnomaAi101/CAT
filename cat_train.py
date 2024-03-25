@@ -203,10 +203,9 @@ def main(args):
                 # Gather the losses across all processes for logging (if we use distributed training).
                 avg_loss = accelerator.gather(loss.repeat(args.train_batch_size)).mean()
                 train_loss += avg_loss.item() / args.gradient_accumulation_steps
-                accelerator.log("loss/avg", train_loss.item())
-                train_loss.requires_grad = True
+                accelerator.log("loss/avg", train_loss)
                 # Backpropagate
-                accelerator.backward(train_loss)
+                accelerator.backward(avg_loss)
                 if accelerator.sync_gradients:
                     accelerator.clip_grad_norm_(unet.parameters(), args.max_grad_norm)
                 optimizer.step()
@@ -258,8 +257,8 @@ if __name__ == "__main__":
     parser.add_argument('--adam_beta2', type=float, default=0.999, help = "Beta2 for Adam optimizer. Default is 0.999.")
     parser.add_argument('--adam_weight_decay', type=float, default=1e-2, help = "")
     parser.add_argument('--adam_epsilon', type=float, default=1e-08, help="")
-    parser.add_argument('--dataset_name', type=str, default="lambdalabs/pokemon-blip-captions", help="")
-    parser.add_argument('--train_data_dir', type=str, default=None, help = "Directory containing the training data. If None, the dataset will be downloaded from the Hugging Face Hub.")
+    parser.add_argument('--dataset_name', type=str, default=None, help="This is for the dataset name to be downloaded from the Hugging Face Hub. If you want to use a custom dataset, set this to None and provide the train_data_dir.")
+    parser.add_argument('--train_data_dir', type=str, default=None, help = "Directory containing the training data.")
     parser.add_argument('--dataset_config_name', type=str, default=None, help = "")
     parser.add_argument('--cache_dir', type=str, default=None, help="")
     parser.add_argument('--image_column', type=str, default="image", help="")
@@ -293,4 +292,6 @@ if __name__ == "__main__":
             t_args = argparse.Namespace()
             t_args.__dict__.update(json.load(f))
             args = parser.parse_args(namespace=t_args)
+    assert args.prediction_type in ["epsilon", "v_prediction"], "Prediction type must be either 'epsilon' or 'v_prediction'"
+    assert args.train_data_dir or args.dataset_name, "Either train_data_dir or dataset_name must be provided."
     main(args)
