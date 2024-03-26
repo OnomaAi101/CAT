@@ -1,0 +1,52 @@
+[[datasets]]
+    [[datasets.subsets]]
+    num_repeats = 1
+    image_dir = "/share0/DEEPTEXT_LAB/CAT/CAT/data/textual_inversion/cat_statue"
+    class_tokens = "cat statue"
+    caption_extension= ".txt"
+    [[datasets.subsets]]
+    num_repeats = 1
+    image_dir = "/share0/DEEPTEXT_LAB/CAT/CAT/data/textual_inversion/clock"
+    class_tokens = "clock"
+    caption_extension= ".txt"
+    [[datasets.subsets]]
+    num_repeats = 1
+    image_dir = "/share0/DEEPTEXT_LAB/CAT/CAT/data/textual_inversion/colorful_teapot"
+    class_tokens = "colorful teapot"
+    caption_extension= ".txt"
+    [[datasets.subsets]]
+    num_repeats = 1
+    image_dir = "/share0/DEEPTEXT_LAB/CAT/CAT/data/textual_inversion/elephant"
+    class_tokens = "elephant"
+    caption_extension= ".txt"
+    [[datasets.subsets]]
+    num_repeats = 1
+    image_dir = "/share0/DEEPTEXT_LAB/CAT/CAT/data/textual_inversion/mug_skulls"
+    class_tokens = "mug skulls"
+    caption_extension= ".txt"
+    [[datasets.subsets]]
+    num_repeats = 1
+    image_dir = "/share0/DEEPTEXT_LAB/CAT/CAT/data/textual_inversion/physics_mug"
+    class_tokens = "physics mug"
+    caption_extension= ".txt"
+    [[datasets.subsets]]
+    num_repeats = 1
+    image_dir = "/share0/DEEPTEXT_LAB/CAT/CAT/data/textual_inversion/red_teapot"
+    class_tokens = "red teapot"
+    caption_extension= ".txt"
+    [[datasets.subsets]]
+    num_repeats = 1
+    image_dir = "/share0/DEEPTEXT_LAB/CAT/CAT/data/textual_inversion/round_bird"
+    class_tokens = "round bird"
+    caption_extension= ".txt"
+[general]
+resolution = 512
+shuffle_caption = true
+keep_tokens = 0
+flip_aug = false
+caption_extension = ".txt"
+enable_bucket = true
+bucket_reso_steps = 64
+bucket_no_upscale = false
+min_bucket_reso = 320
+max_bucket_reso = 768

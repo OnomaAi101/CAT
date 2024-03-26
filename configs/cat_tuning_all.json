@@ -40,7 +40,7 @@
     "cat_factor": 1.0,
     "max_grad_norm": 1.0,
     "checkpointing_steps": 2000,
-    "checkpoints_total_limit": 5,
+    "checkpoints_total_limit": 20,
     "trigger_word": "shs",
     "validation_prompt": [
     "shs, a cat statue standing at a desk, looking up",

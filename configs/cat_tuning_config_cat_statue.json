@@ -40,9 +40,9 @@
     "cat_factor": 1.0,
     "max_grad_norm": 1.0,
     "checkpointing_steps": 150,
-    "checkpoints_total_limit": 5,
+    "checkpoints_total_limit": 20,
     "trigger_word": "shs",
-    "validation_prompt": ["shs, a cat statue standing at a grass field", "a cat statue standing at a grass field"],
+    "validation_prompt": ["shs, a cat statue standing at a grass field","aka, a cat statue standing at a grass field", "a cat statue standing at a grass field", "aka iom adu ira cat statue aaa, standing at grass field"],
     "weight_dtype": "torch.float32",
     "num_validation_images": 4
 }

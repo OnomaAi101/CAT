@@ -39,7 +39,7 @@
     "snr_gamma": null,
     "max_grad_norm": 1.0,
     "checkpointing_steps": 20,
-    "checkpoints_total_limit": 5,
+    "checkpoints_total_limit": 20,
     "validation_prompt": ["A pokemon with blue eyes"],
     "weight_dtype": "torch.float32",
     "num_validation_images": 1

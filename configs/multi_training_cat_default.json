@@ -12,7 +12,7 @@
     "non_ema_revision": null,
     "gradient_checkpointing": true,
     "scale_lr": null,
-    "learning_rate": 0.0001,
+    "learning_rate": 0.00005,
     "train_batch_size": 1,
     "adam_beta1": 0.9,
     "adam_beta2": 0.999,
@@ -40,8 +40,8 @@
     "snr_gamma": null,
     "cat_factor": 1.0,
     "max_grad_norm": 1.0,
-    "checkpointing_steps": 2000,
-    "checkpoints_total_limit": 5,
+    "checkpointing_steps": 1000,
+    "checkpoints_total_limit": 20,
     "trigger_word": "shs",
     "validation_prompt": [
     "a girl in fantasy background, looking up"

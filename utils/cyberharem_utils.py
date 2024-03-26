@@ -155,7 +155,7 @@ def prepare_metadata_and_samples(output_dir:str, author:str = "CyberHarem", samp
             metadata.append({"file_name": image, "text": caption})
     # save jsonl to output_dir/metadata.jsonl
     metadata_path = os.path.join(output_dir, "metadata.jsonl")
-    with jsonlines.open(metadata_path, mode='w', encoding="utf-8") as writer:
+    with jsonlines.open(metadata_path, mode='w') as writer:
         writer.write_all(metadata)
     print(f"Saved metadata to {metadata_path}")
     return metadata
